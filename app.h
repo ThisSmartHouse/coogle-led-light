@@ -82,14 +82,19 @@
 #define APP_MAX_STATE_LEN 16
 #endif
 
+
+#define LIGHT_STATE_OFF false
+#define LIGHT_STATE_ON true
+
 #define DEBUG_LIGHT_STATE(statePtr, name) \
 		LOG_DEBUG("Light State (" name ")"); \
 		LOG_PRINTF(DEBUG, "\tBrightness: %d", statePtr->brightness); \
+		LOG_PRINTF(DEBUG, "\tStored Brightness: %d", statePtr->stored_brightness); \
 		LOG_PRINTF(DEBUG, "\tR: %d", statePtr->color.r); \
 		LOG_PRINTF(DEBUG, "\tG: %d", statePtr->color.g); \
 		LOG_PRINTF(DEBUG, "\tB: %d", statePtr->color.b); \
 		LOG_PRINTF(DEBUG, "\tEffect: %s", (strlen(statePtr->effect) > 0) ? statePtr->effect : "-"); \
-		LOG_PRINTF(DEBUG, "\tState: %s", (strlen(statePtr->state)  > 0) ? statePtr->state : "-"); \
+		LOG_PRINTF(DEBUG, "\tState: %s", statePtr->state ? "on" : "off"); \
 		LOG_PRINTF(DEBUG, "\tTransition: %d", statePtr->transition);
 
 struct app_config {
@@ -100,13 +105,23 @@ struct app_config {
 };
 
 typedef struct app_light_state {
-	uint8_t brightness;
-	CRGB color;
-	char effect[APP_MAX_EFFECT_NAME_LEN + 1];
-	char state[APP_MAX_STATE_LEN + 1];
-	uint8_t transition;
-} current_state;
+	uint8_t brightness = 255;
+	uint8_t stored_brightness = 255;
+	CRGB color = CRGB::White;
+	CRGB stored_color = CRGB::White;
+	char effect[APP_MAX_EFFECT_NAME_LEN + 1] = "";
+	bool state;
+	uint8_t transition = 0;
 
+	bool has_brightness = false;
+	bool has_color = false;
+	bool has_effect = false;
+	bool has_state = false;
+	bool has_transition = false;
+	bool state_changed = true;
+};
+
+app_light_state current_state;
 app_light_state *new_state = NULL;
 
 const size_t json_state_size = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(5) + 70;

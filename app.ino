@@ -41,28 +41,17 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 	DynamicJsonDocument doc(json_state_size);
 	DeserializationError err;
 	JsonObject color;
+	JsonObject stateJson;
 	CoogleIOT_Logger *logger = _ciot_log;
 	char *buffer;
 
-	buffer = (char *)malloc(length);
-
-	memcpy(buffer, payload, length+1);
+	// Make local copy of payload string
+	buffer = (char *)malloc(length + 1);
+	memcpy(buffer, payload, length);
 	buffer[length] = '\0';
 
 	if(logger)
 		logger->logPrintf(DEBUG, "Message Received: %s (%d bytes)", buffer, strlen(buffer));
-
-	if(new_state) {
-		if(new_state->effect) {
-			free(new_state->effect);
-		}
-
-		if(new_state->state) {
-			free(new_state->state);
-		}
-
-		free(new_state);
-	}
 
 	err = deserializeJson(doc, buffer);
 
@@ -73,43 +62,151 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 	}
 
 	new_state = (app_light_state *)malloc(sizeof(app_light_state));
-
 	memset(new_state, NULL, sizeof(app_light_state));
 
-	color = doc["color"];
+	stateJson = doc.as<JsonObject>();
 
-	new_state->brightness = doc["brightness"];
-	new_state->color.r = color["r"];
-	new_state->color.g = color["g"];
-	new_state->color.b = color["b"];
-	new_state->transition = doc["transition"];
+	for(JsonPair p : stateJson) {
 
-	if(strlen(doc["effect"]) > 0) {
-		memcpy(&new_state->effect, doc["effect"].as<const char*>(), strlen(doc["effect"]));
+		if(strcmp(p.key().c_str(), "brightness") == 0) {
+
+			if(p.value().is<unsigned int>()) {
+				new_state->brightness = p.value().as<unsigned int>();
+				new_state->has_brightness = true;
+			}
+
+		} else if(strcmp(p.key().c_str(), "transition") == 0) {
+
+			if(p.value().is<unsigned int>()) {
+				new_state->transition = p.value().as<unsigned int>();
+				new_state->has_transition = true;
+			}
+
+		} else if(strcmp(p.key().c_str(), "color") == 0) {
+
+			if(p.value().is<JsonObject>()) {
+				color = p.value().as<JsonObject>();
+
+				new_state->has_color = true;
+
+				if(color.containsKey("r")) {
+					if(color["r"].is<unsigned int>()) {
+						new_state->color.r = color["r"].as<unsigned int>();
+					} else {
+						new_state->color.r = 0;
+					}
+				}
+
+				if(color.containsKey("g")) {
+					if(color["g"].is<unsigned int>()) {
+						new_state->color.g = color["g"].as<unsigned int>();
+					} else {
+						new_state->color.g = 0;
+					}
+				}
+
+				if(color.containsKey("b")) {
+					if(color["b"].is<unsigned int>()) {
+						new_state->color.b = color["b"].as<unsigned int>();
+					} else {
+						new_state->color.b = 0;
+					}
+				}
+			}
+
+		} else if(strcmp(p.key().c_str(), "effect") == 0) {
+
+			if(p.value().is<const char *>()) {
+
+				new_state->has_effect = true;
+
+				memcpy(&new_state->effect[0],
+						p.value().as<const char *>(),
+						strlen(p.value().as<const char *>()) < APP_MAX_EFFECT_NAME_LEN ?
+							APP_MAX_EFFECT_NAME_LEN : strlen(p.value().as<const char *>())
+				);
+			}
+
+		} else if(strcmp(p.key().c_str(), "state") == 0) {
+
+			if(p.value().is<const char *>()) {
+
+				new_state->has_state = true;
+
+				if(strcmp(p.value().as<const char *>(), "OFF") == 0) {
+					new_state->state = LIGHT_STATE_OFF;
+				} else if(strcmp(p.value().as<const char *>(), "ON") == 0) {
+					new_state->state = LIGHT_STATE_ON;
+				}
+			}
+
+		} else {
+			if(logger)
+				logger->logPrintf(WARNING, "Unknown JSON Key '%s'", p.key().c_str());
+		}
 	}
-
-	if(strlen(doc["state"]) > 0) {
-		memcpy(&new_state->state, doc["state"].as<const char*>(), strlen(doc["state"]));
-	}
-
-	free(buffer);
-	processNewState();
-}
-
-void processNewState()
-{
-	CoogleIOT_Logger *logger = _ciot_log;
 
 	DEBUG_LIGHT_STATE(new_state, "New State");
 
-	for(int i = 0; i < NUM_LEDS; i++) {
-		memcpy(&leds[i], &new_state->color, sizeof(CRGB));
+	if(new_state->has_state) {
+
+		if(new_state->state == LIGHT_STATE_ON) {
+
+			current_state.state = new_state->state;
+			current_state.brightness = current_state.stored_brightness;
+
+			if(new_state->has_brightness) {
+				current_state.brightness = new_state->brightness;
+				current_state.stored_brightness = new_state->brightness;
+			}
+
+			if(new_state->has_color) {
+				current_state.color.r = new_state->color.r;
+				current_state.color.g = new_state->color.g;
+				current_state.color.b = new_state->color.b;
+			}
+
+		} else {
+			current_state.brightness = 0;
+			current_state.state = LIGHT_STATE_OFF;
+		}
+
 	}
 
+	current_state.state_changed = true;
+
+	app_light_state *temp = &current_state;
+	DEBUG_LIGHT_STATE(temp, "New Current State");
+
+	free(buffer);
 	free(new_state);
 	new_state = NULL;
+
+	return;
 }
 
+void publishCurrentState()
+{
+	DynamicJsonDocument doc(json_state_size);
+	JsonObject color = doc.createNestedObject("color");
+
+	char buffer[1024];
+	size_t jsonSize;
+
+	doc["brightness"] = current_state.brightness;
+	doc["state"] = (current_state.state == LIGHT_STATE_ON) ? "ON" : "OFF";
+	color["r"] = current_state.color.r;
+	color["g"] = current_state.color.g;
+	color["b"] = current_state.color.b;
+	doc["transition"] = current_state.transition;
+	doc["effect"] = current_state.effect;
+
+	jsonSize = serializeJson(doc, buffer);
+
+	if(mqttManager->connected()) {
+		mqtt->publish(STRINGIZE_VALUE_OF(STATE_TOPIC), buffer, jsonSize);
+	}
+}
 
 void onMQTTConnect()
 {
@@ -211,6 +308,22 @@ void loop()
 	mqttManager->loop();
 
 	//LOG_PRINTF(DEBUG, "Heap Size: %d", ESP.getFreeHeap());
+
+	if(current_state.state_changed) {
+		current_state.state_changed = false;
+
+		publishCurrentState();
+
+		if(strlen(current_state.effect) > 0) {
+
+		} else {
+			FastLED.setBrightness(current_state.brightness);
+
+			for(int i = 0; i < NUM_LEDS; i++) {
+				memcpy(&leds[i], &current_state.color, sizeof(CRGB));
+			}
+		}
+	}
 
 	FastLED.show();
 }
