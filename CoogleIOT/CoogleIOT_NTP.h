@@ -61,7 +61,7 @@ class CoogleIOT_NTP
 
 		CoogleIOT_NTP& setOffsetSeconds(int);
 		CoogleIOT_NTP& setDaylightOffsetSeconds(int);
-
+		CoogleIOT_NTP& setReadyCallback(void (*)());
 		time_t getNow();
 		bool active();
 		bool connectTimerTick = false;
@@ -75,6 +75,8 @@ class CoogleIOT_NTP
 		os_timer_t connectTimer;
 		int connectAttempts = 0;
 		bool attemptingSync = false;
+
+		void (* readyCallback)() = NULL;
 
 		CoogleIOT_Wifi *WiFiManager = NULL;
 		CoogleIOT_Logger *logger = NULL;

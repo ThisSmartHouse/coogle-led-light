@@ -280,7 +280,11 @@ char *CoogleIOT_Logger::getLogs()
 
 bool CoogleIOT_Logger::initialize()
 {
-	SPIFFS.begin();
+
+	if(!SPIFFS.begin()) {
+		return false;
+	}
+
 	logFile = SPIFFS.open(COOGLEIOT_LOGGER_LOGFILE, "a+");
 
 	if(!logFile) {

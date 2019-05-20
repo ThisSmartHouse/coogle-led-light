@@ -40,6 +40,9 @@ HTTP_URI ?= /update
 HTTP_PWD ?= user
 HTTP_USR ?= password
 
+SPIFFS_ADDR ?= 0x202000
+SPIFFS_SIZE ?= 0x1F5000
+
 PROJECT_DIRECTORY = $(shell pwd)
 PROJECT_BUILD_IDENTIFIER = $(shell basename $(PROJECT_DIRECTORY))
 
@@ -250,10 +253,10 @@ OBJCOPY = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-objcopy
 LIBMAIN_DST = $(BUILD_DIR)/libmain2.a
 LIBMAIN_SRC = $(SDK_ROOT)/lib/libmain.a
 
-LINKER_LIBS = hal phy pp net80211 lwip2-536-feat wpa crypto main2 wps bearssl axtls espnow smartconfig airkiss wpa2 stdc++ m c gcc
+LINKER_LIBS = main2 hal phy pp net80211 lwip2-536-feat wpa crypto wps bearssl axtls espnow smartconfig airkiss wpa2 stdc++ m c gcc
 LINKER_LIBS := $(addprefix -l, $(LINKER_LIBS))
 
-LINKER_CMD = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc -fno-exceptions -Wl,-Map -Wl,$(BUILD_DIR)/$(MAIN_NAME).map -g -w -Os -nostdlib -Wl,--no-check-sections -u app_entry -u _printf_float -u _scanf_float -Wl,-static -L$(BUILD_DIR) -L$(SDK_ROOT)/lib -L$(SDK_ROOT)/ld -L$(SDK_ROOT)/libc/xtensa-lx106-elf/lib -T$(MAIN_NAME).ld -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read -o $(ELF_FILE) -Wl,--start-group $(BUILD_DIR)/arduino.ar $(LINKER_LIBS) $(sort $(USER_OBJ)) $(BUILD_DIR)/buildinfo.c++.o $(BUILD_DIR)/arduino.ar  -Wl,--end-group
+LINKER_CMD = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc -fno-exceptions -Wl,--gc-sections -Wl,-Map -Wl,$(BUILD_DIR)/$(MAIN_NAME).map -g -w -Os -nostdlib -Wl,--no-check-sections -u app_entry -u Cache_Read_Enable_New -u _printf_float -u _scanf_float -Wl,-static -L$(BUILD_DIR) -L$(SDK_ROOT)/lib -L$(SDK_ROOT)/ld -L$(SDK_ROOT)/libc/xtensa-lx106-elf/lib -T$(MAIN_NAME).ld -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read -o $(ELF_FILE) -Wl,--start-group $(LINKER_LIBS) $(BUILD_DIR)/arduino.ar $(sort $(USER_OBJ)) $(BUILD_DIR)/buildinfo.c++.o  -Wl,--end-group
 ESPTOOL_PY ?= /usr/local/bin/esptool.py
 
 $(BUILD_INFO_H): | $(BUILD_DIR)
@@ -272,6 +275,10 @@ $(BUILD_DIR)/%.pde$(OBJ_EXT): %.pde $(BUILD_INFO_H) $(ARDUINO_MK)
 	echo  "CC $(<F)"
 	$(CPP_COM) $(CPP_EXTRA) -x c++ -include $(CORE_DIR)/Arduino.h $< -o $@
 
+$(BUILD_DIR)/rboot-bigflash.c$(OBJ_EXT): rboot-bigflash.c $(ARUDINO_MK)
+	echo "CC $(<F)"
+	$(C_COM) $(C_EXTRA) -DIRAM_ATTR="__attribute__((__section__(\".iram.text\")))" $< -o $@
+	
 $(BUILD_DIR)/%.c$(OBJ_EXT): %.c $(ARDUINO_MK)
 	echo  "CC $(<F)"
 	$(C_COM) $(C_EXTRA) $< -o $@
@@ -295,12 +302,13 @@ $(ELF_FILE): $(CORE_LIB) $(USER_LIBS) $(USER_OBJ)
 	echo 	'#include <buildinfo.h>' >$(BUILD_INFO_CPP)
 	echo '_tBuildInfo _BuildInfo = {"$(BUILD_DATE)","$(BUILD_TIME)","$(SRC_GIT_VERSION)","$(ESP_ARDUINO_VERSION)"};' >>$(BUILD_INFO_CPP)
 	$(CPP_COM) $(BUILD_INFO_CPP) -o $(BUILD_INFO_OBJ)
+	echo "$(LINKER_CMD) $(LD_EXTRA)"
 	$(LINKER_CMD) $(LD_EXTRA)
 	$(GEN_PART_COM)
 	
 $(LIBMAIN_DST): $(LIBMAIN_SRC)
 	@echo "OC $(notdir $@)"
-	@$(OBJCOPY) -W Cache_Read_Enable_New $^ $@
+	$(OBJCOPY) -W Cache_Read_Enable_New $^ $@
 
 $(MAIN_EXE): $(LIBMAIN_DST) $(ELF_FILE)
 	echo Building $(MAIN_EXE)
@@ -316,8 +324,8 @@ endif
 
 upload flash: all $(FS_IMAGE)
 	#echo $(UPLOAD_COM)
-	echo $(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE)
-	$(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) 0x100000 $(FS_IMAGE)
+	echo $(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE)
+	$(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE)
 	#$(ESPTOOL) -bz 4M -cd ck -cb $(UPLOAD_SPEED) -ca 0x00000 -cf $(BOOT_LOADER) -ca 0x2000 $(MAIN_EXE)"
 
 vars: 
@@ -334,7 +342,7 @@ http: all
 
 $(FS_IMAGE): $(ARDUINO_MK) $(wildcard $(FS_DIR)/*)
 	echo Generating filesystem image: $(FS_IMAGE)
-	$(TOOLS_ROOT)/mkspiffs/mkspiffs -b 4096  -s 0xFC000 -c $(FS_DIR) $(FS_IMAGE)
+	$(TOOLS_ROOT)/mkspiffs/mkspiffs -b 4096 -s $(SPIFFS_SIZE) -c $(FS_DIR) $(FS_IMAGE)
 
 fs: $(FS_IMAGE)
 
@@ -352,11 +360,11 @@ run: flash
 FLASH_FILE ?= $(BUILD_DIR)/esp_flash.bin
 dump_flash:
 	echo Dumping flash memory to file: $(FLASH_FILE)
-	$(ESPTOOL_PATTERN) read_flash 0 $(shell perl -e 'shift =~ /(\d+)([MK])/ || die "Invalid memory size\n";$$mem_size=$$1*1024;$$mem_size*=1024 if $$2 eq "M";print $$mem_size;' $(FLASH_DEF)) $(FLASH_FILE)
+	$(ESPTOOL_PY) read_flash 0 $(shell perl -e 'shift =~ /(\d+)([MK])/ || die "Invalid memory size\n";$$mem_size=$$1*1024;$$mem_size*=1024 if $$2 eq "M";print $$mem_size;' $(FLASH_DEF)) $(FLASH_FILE)
 
 dump_fs:
 	echo Dumping flash file system to directory: $(FS_REST_DIR)
-	-$(ESPTOOL_PATTERN) read_flash $(SPIFFS_START) $(SPIFFS_SIZE) $(FS_IMAGE)
+	-$(ESPTOOL_PY)) read_flash $(SPIFFS_START) $(SPIFFS_SIZE) $(FS_IMAGE)
 	mkdir -p $(FS_REST_DIR)
 	echo
 	echo == Files ==
@@ -364,10 +372,10 @@ dump_fs:
 
 restore_flash:
 	echo Restoring flash memory from file: $(FLASH_FILE)
-	$(ESPTOOL_PATTERN) -a soft_reset write_flash 0 $(FLASH_FILE)
+	$(ESPTOOL_PY) -a soft_reset write_flash 0 $(FLASH_FILE)
 
 erase_flash:
-	$(ESPTOOL_PATTERN) erase_flash
+	$(ESPTOOL_PY) erase_flash
 
 LIB_OUT_FILE ?= $(BUILD_DIR)/$(MAIN_NAME).a
 .PHONY: lib

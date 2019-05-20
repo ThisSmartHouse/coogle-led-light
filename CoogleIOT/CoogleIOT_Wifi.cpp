@@ -21,6 +21,12 @@
 */
 #include "CoogleIOT_Wifi.h"
 
+CoogleIOT_Wifi& CoogleIOT_Wifi::setConfigManager(CoogleIOT_Config *c)
+{
+	configManager = c;
+	return *this;
+}
+
 CoogleIOT_Wifi& CoogleIOT_Wifi::setLogger(CoogleIOT_Logger *_logger)
 {
 	logger = _logger;
@@ -130,6 +136,18 @@ CoogleIOT_Wifi& CoogleIOT_Wifi::setLocalAPPassword(String &pass)
 	return setLocalAPPassword(pass.c_str());
 }
 
+CoogleIOT_Wifi& CoogleIOT_Wifi::setHostname(String &host)
+{
+	return setHostname(host.c_str());
+}
+
+CoogleIOT_Wifi& CoogleIOT_Wifi::setHostname(const char *host)
+{
+	memset(&hostname[0], NULL, 64);
+	memcpy(&hostname[0], host, (strlen(host) > 63) ? 63 : strlen(host));
+	return *this;
+}
+
 CoogleIOT_Wifi& CoogleIOT_Wifi::setLocalAPPassword(const char *pass)
 {
 	memset(&localAPPassword[0], NULL, 65);
@@ -213,8 +231,27 @@ void CoogleIOT_Wifi::loop()
 
 bool CoogleIOT_Wifi::initialize()
 {
+	coogleiot_config_base_t *config;
+
 	if(logger)
 		logger->info("Initializing WiFiManager");
+
+	if(configManager) {
+		if(configManager->loaded) {
+			config = configManager->getConfig();
+			setRemoteAPName(config->wifi_ssid);
+			setRemoteAPPassword(config->wifi_pass);
+		}
+	}
+
+	if(strlen(hostname) <= 0) {
+		char tmp[17];
+		sprintf(tmp, "coogleiot-%06x", ESP.getChipId());
+		setHostname(tmp);
+
+		if(logger)
+			logger->logPrintf(WARNING, "Host name not provided, set automatically to '%s'", hostname);
+	}
 
 	WiFi.disconnect();
 	WiFi.setAutoConnect(false);

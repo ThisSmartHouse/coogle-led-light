@@ -21,6 +21,13 @@
 */
 #include "CoogleIOT_NTP.h"
 
+CoogleIOT_NTP& CoogleIOT_NTP::setReadyCallback(void(*cb)())
+{
+	this->readyCallback = cb;
+	return *this;
+}
+
+
 CoogleIOT_NTP& CoogleIOT_NTP::setWifiManager(CoogleIOT_Wifi *_wifi)
 {
 	WiFiManager = _wifi;
@@ -98,9 +105,15 @@ void CoogleIOT_NTP::loop()
 				os_timer_arm(&connectTimer, COOGLEIOT_NTP_SYNC_TIMEOUT, false);
 			} else {
 				now = time(nullptr);
+
 				if(logger)
 					logger->info("Time successfully synchronized with NTP server");
+
 				attemptingSync = false;
+
+				if(readyCallback) {
+					readyCallback();
+				}
 			}
 		}
 	}

@@ -25,6 +25,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include "CoogleIOT_Logger.h"
+#include "CoogleIOT_Config.h"
 
 
 #ifndef COOGLEIOT_WIFI_CONNECT_TIMEOUT
@@ -36,6 +37,7 @@
 #endif
 
 class CoogleIOT_Logger;
+class CoogleIOT_Config;
 
 class CoogleIOT_Wifi
 {
@@ -56,28 +58,34 @@ class CoogleIOT_Wifi
 		CoogleIOT_Wifi& setRemoteAPPassword(const char *);
 		CoogleIOT_Wifi& setLocalAPName(const char *);
 		CoogleIOT_Wifi& setLocalAPPassword(const char *);
+		CoogleIOT_Wifi& setHostname(const char *);
 
+		CoogleIOT_Wifi& setHostname(String &);
 		CoogleIOT_Wifi& setRemoteAPName(String &);
 		CoogleIOT_Wifi& setRemoteAPPassword(String &);
 		CoogleIOT_Wifi& setLocalAPName(String &);
 		CoogleIOT_Wifi& setLocalAPPassword(String &);
 
 		CoogleIOT_Wifi& setLogger(CoogleIOT_Logger *);
+		CoogleIOT_Wifi& setConfigManager(CoogleIOT_Config *);
 
 		bool connected();
 
 	private:
 
-		char remoteAPName[33];
-		char remoteAPPassword[65];
-		char localAPName[33];
-		char localAPPassword[65];
+		char remoteAPName[33] = {NULL};
+		char remoteAPPassword[65] = {NULL};
+		char localAPName[33] = {NULL};
+		char localAPPassword[65] = {NULL};
+
+		char hostname[64] = {NULL};
 
 		os_timer_t wifiConnectTimer;
 
 		int wifiFailuresCount = 0;
 
 		CoogleIOT_Logger *logger = NULL;
+		CoogleIOT_Config *configManager = NULL;
 
 		bool attemptingConnection = false;
 

@@ -26,6 +26,7 @@
 #include <FS.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
+#include <ESP8266HTTPClient.h>
 #include <FastLED.h>
 #include <Hash.h>
 #include <PubSubClient.h>
@@ -34,7 +35,9 @@
 
 FASTLED_USING_NAMESPACE
 
-CRGB leds[NUM_LEDS];
+CRGB *leds;
+bool ota_ready = false;
+bool restart = false;
 
 void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 {
@@ -45,13 +48,11 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 	CoogleIOT_Logger *logger = _ciot_log;
 	char *buffer;
 
-	// Make local copy of payload string
+	// Make local copy of payload string which is important if we end up publishing before
+	// we are done with it.
 	buffer = (char *)malloc(length + 1);
 	memcpy(buffer, payload, length);
 	buffer[length] = '\0';
-
-	if(logger)
-		logger->logPrintf(DEBUG, "Message Received: %s (%d bytes)", buffer, strlen(buffer));
 
 	err = deserializeJson(doc, buffer);
 
@@ -61,8 +62,7 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 		return;
 	}
 
-	new_state = (app_light_state *)malloc(sizeof(app_light_state));
-	memset(new_state, NULL, sizeof(app_light_state));
+	new_state = (app_light_state *)os_zalloc(sizeof(app_light_state));
 
 	stateJson = doc.as<JsonObject>();
 
@@ -146,7 +146,7 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 		}
 	}
 
-	DEBUG_LIGHT_STATE(new_state, "New State");
+//	DEBUG_LIGHT_STATE(new_state, "New State");
 
 	if(new_state->has_state) {
 
@@ -176,10 +176,10 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 	current_state.state_changed = true;
 
 	app_light_state *temp = &current_state;
-	DEBUG_LIGHT_STATE(temp, "New Current State");
+	//DEBUG_LIGHT_STATE(temp, "New Current State");
 
 	free(buffer);
-	free(new_state);
+	os_free(new_state);
 	new_state = NULL;
 
 	return;
@@ -187,6 +187,20 @@ void onMQTTCommand(const char *topic, byte *payload, unsigned int length)
 
 void publishCurrentState()
 {
+	app_config_t *config;
+
+	if(!mqttManager->connected()) {
+		return;
+	}
+
+	if(!configManager) {
+		return;
+	}
+
+	if(!configManager->loaded) {
+		return;
+	}
+
 	DynamicJsonDocument doc(json_state_size);
 	JsonObject color = doc.createNestedObject("color");
 
@@ -203,15 +217,25 @@ void publishCurrentState()
 
 	jsonSize = serializeJson(doc, buffer);
 
-	if(mqttManager->connected()) {
-		mqtt->publish(STRINGIZE_VALUE_OF(STATE_TOPIC), buffer, jsonSize);
-	}
+	config = (app_config_t *)configManager->getConfig();
+	mqtt->publish(config->state_topic, buffer, jsonSize);
+
 }
 
 void onMQTTConnect()
 {
-	LOG_PRINTF(DEBUG, "Subscribed to %s", STRINGIZE_VALUE_OF(SET_TOPIC));
-	mqtt->subscribe(STRINGIZE_VALUE_OF(SET_TOPIC));
+	app_config_t *config;
+
+	if(configManager) {
+		if(configManager->loaded) {
+			config = (app_config_t *)configManager->getConfig();
+
+			mqtt->subscribe(config->set_topic);
+			LOG_PRINTF(INFO, "Subscribed to %s", config->set_topic);
+
+			publishCurrentState();
+		}
+	}
 }
 
 void setupSerial()
@@ -226,15 +250,15 @@ void setupSerial()
 		yield();
 	}
 
-	Serial.printf(APP_NAME " v%s (%s) (built: %s)\r\n", _BuildInfo.src_version, _BuildInfo.env_version, _BuildInfo.date);
+
+	Serial.printf(APP_NAME " v%s (%s) (built: %s %s)\r\n", _BuildInfo.src_version, _BuildInfo.env_version, _BuildInfo.date, _BuildInfo.time);
 }
 
 void setupMQTT()
 {
 	mqttManager = new CoogleIOT_MQTT;
 	mqttManager->setLogger(_ciot_log);
-	mqttManager->setHostname(STRINGIZE_VALUE_OF(MQTT_SERVER));
-	mqttManager->setPort(MQTT_PORT);
+	mqttManager->setConfigManager(configManager);
 	mqttManager->setWifiManager(WiFiManager);
 	mqttManager->initialize();
 	mqttManager->setConnectCallback(onMQTTConnect);
@@ -244,11 +268,27 @@ void setupMQTT()
 	mqtt->setCallback(onMQTTCommand);
 }
 
+void onNewFirmware()
+{
+	LOG_INFO("New Firmware available");
+	LOG_INFO("Current Firmware Details");
+	LOG_PRINTF(INFO, APP_NAME " v%s (%s) (built: %s %s)\r\n", _BuildInfo.src_version, _BuildInfo.env_version, _BuildInfo.date, _BuildInfo.time);
+
+	restart = true;
+}
+
+void onNTPReady()
+{
+	setupOTA();
+	ota_ready = true;
+}
+
 void setupNTP()
 {
     NTPManager = new CoogleIOT_NTP;
 	NTPManager->setLogger(_ciot_log);
     NTPManager->setWifiManager(WiFiManager);
+    NTPManager->setReadyCallback(onNTPReady);
     NTPManager->initialize();
 
 }
@@ -263,23 +303,119 @@ void setupLogging()
 
 void setupLeds()
 {
-    FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-    FastLED.setBrightness(BRIGHTNESS);
+	app_config_t *config;
 
-    // Turn on the Leds when we boot up as normal white
-    for(int i = 0; i < NUM_LEDS; i++) {
-    	leds[i] = CRGB::White;
-    }
+	if(configManager) {
+		if(configManager->loaded) {
+			config = (app_config_t *)configManager->getConfig();
+
+			leds = (CRGB *)os_zalloc(config->num_leds * sizeof(CRGB));
+
+			FastLED.addLeds<WS2812, DATA_PIN, COLOR_ORDER>(leds, config->num_leds).setCorrection(config->color_correction);
+
+		    // Turn on the Leds when we boot up as normal white
+		    for(int i = 0; i < config->num_leds; i++) {
+		    	leds[i] = CRGB::White;
+		    }
+
+		    current_state.color = CRGB::White;
+		    current_state.state = config->lights_on_at_boot;
+		    current_state.brightness = config->brightness_max;
+
+		    if(config->lights_on_at_boot) {
+		    	FastLED.setBrightness(config->brightness_max);
+		    } else {
+		    	FastLED.setBrightness(0);
+		    }
+
+
+
+		    LOG_PRINTF(INFO, "LEDs initialized (%d total LEDS)", config->num_leds);
+		}
+	}
+
+}
+
+bool onParseConfig(DynamicJsonDocument& doc) {
+	JsonObject app;
+
+	if(!doc["app"].is<JsonObject>()) {
+		LOG_ERROR("No application configuration found");
+		return false;
+	}
+
+	app = doc["app"].as<JsonObject>();
+
+	if(app["mqtt_set_topic"].is<const char *>()) {
+
+		strlcpy(app_config->set_topic, app["mqtt_set_topic"] | "", sizeof(app_config->state_topic));
+
+		LOG_PRINTF(INFO, "Set Topic: %s", app_config->set_topic);
+	}
+
+	if(app["mqtt_state_topic"].is<const char *>()) {
+		strlcpy(app_config->state_topic, app["mqtt_state_topic"] | "", sizeof(app_config->state_topic));
+
+		LOG_PRINTF(INFO, "State Topic: %s", app_config->state_topic);
+	}
+
+	app_config->lights_on_at_boot = (bool)app["lights_on_default"] | true;
+
+	app_config->num_leds = app["num_leds"] | 10;
+	app_config->brightness_max = app["max_brightness"] | 255;
+	app_config->frames_per_sec = app["frames_per_sec"] | 120;
+	app_config->color_correction = app["color_correction"] | 0xFFB0F0;
+
+	LOG_INFO("Application Configuration Loaded");
+
+	return true;
+}
+
+void setupConfig()
+{
+	app_config = (app_config_t *)os_zalloc(sizeof(app_config_t));
+
+	configManager = new CoogleIOT_Config;
+	configManager->setLogger(_ciot_log);
+	configManager->setConfigStruct((coogleiot_config_base_t *)app_config);
+	configManager->setParseCallback(onParseConfig);
+	configManager->initialize();
 }
 
 void setupWiFi()
 {
     WiFiManager = new CoogleIOT_Wifi;
     WiFiManager->setLogger(_ciot_log);
-    WiFiManager->setRemoteAPName(STRINGIZE_VALUE_OF(APP_SSID));
-    WiFiManager->setRemoteAPPassword(STRINGIZE_VALUE_OF(APP_PASS));
+    WiFiManager->setConfigManager(configManager);
 
     WiFiManager->initialize();
+}
+
+void setupOTA()
+{
+	otaManager = new CoogleIOT_OTA;
+	otaManager->setLogger(_ciot_log);
+	otaManager->setWifiManager(WiFiManager);
+	otaManager->setNTPManager(NTPManager);
+	otaManager->setCurrentVersion(_BuildInfo.src_version);
+	otaManager->setConfigManager(configManager);
+	otaManager->setOTACompleteCallback(onNewFirmware);
+	otaManager->initialize();
+}
+
+void logSetupInfo()
+{
+	FSInfo fs_info;
+	LOG_PRINTF(INFO, APP_NAME " v%s (%s) (built: %s %s)\r\n", _BuildInfo.src_version, _BuildInfo.env_version, _BuildInfo.date, _BuildInfo.time);
+
+	if(!SPIFFS.begin()) {
+		LOG_ERROR("Failed to start SPIFFS file system!");
+	} else {
+		SPIFFS.info(fs_info);
+		LOG_INFO("SPIFFS File System");
+		LOG_INFO("-=-=-=-=-=-=-=-=-=-");
+		LOG_PRINTF(INFO, "Total Size: %d byte(s)\nUsed: %d byte(s)\nAvailable: ~ %d byte(s)", fs_info.totalBytes, fs_info.usedBytes, fs_info.totalBytes - fs_info.usedBytes);
+	}
 }
 
 void setup()
@@ -287,8 +423,9 @@ void setup()
     randomSeed(micros());
 
     setupLogging();
+    setupConfig();
 
-    LOG_PRINTF(INFO, APP_NAME " v%s (%s) (built: %s)", _BuildInfo.src_version, _BuildInfo.env_version, _BuildInfo.date);
+	logSetupInfo();
 
     setupWiFi();
     setupNTP();
@@ -303,24 +440,42 @@ void setup()
 
 void loop()
 {
+	app_config_t *config;
+
+	if(restart) {
+		ESP.restart();
+		return;
+	}
+
 	WiFiManager->loop();
 	NTPManager->loop();
 	mqttManager->loop();
 
+	if(ota_ready) {
+		otaManager->loop();
+	}
+
 	//LOG_PRINTF(DEBUG, "Heap Size: %d", ESP.getFreeHeap());
 
-	if(current_state.state_changed) {
-		current_state.state_changed = false;
+	if(configManager) {
+		if(configManager->loaded) {
 
-		publishCurrentState();
+			config = (app_config_t *)configManager->getConfig();
 
-		if(strlen(current_state.effect) > 0) {
+			if(current_state.state_changed) {
+				current_state.state_changed = false;
 
-		} else {
-			FastLED.setBrightness(current_state.brightness);
+				publishCurrentState();
 
-			for(int i = 0; i < NUM_LEDS; i++) {
-				memcpy(&leds[i], &current_state.color, sizeof(CRGB));
+				if(strlen(current_state.effect) > 0) {
+
+				} else {
+					FastLED.setBrightness(current_state.brightness);
+
+					for(int i = 0; i < config->num_leds; i++) {
+						memcpy(&leds[i], &current_state.color, sizeof(CRGB));
+					}
+				}
 			}
 		}
 	}

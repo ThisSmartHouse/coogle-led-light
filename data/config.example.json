@@ -1,0 +1,28 @@
+{
+	"coogleiot" : {
+		"wifi" : {
+			"mode" : "station",
+			"ssid" : "your-ssid",
+			"pass" : "your-pass"
+		},
+		"mqtt" : {
+			"host" : "mqtt-hostname",
+			"port" : 1883
+		},
+		"ota" : {
+			"endpoint" : "https://example.com/ota-manifest.json",
+			"check_on_boot" : true
+		},
+		"security" : {
+			"allow_insecure_ssl" : true
+		}
+	},
+	"app" : {
+		"mqtt_set_topic" : "/test-light/set",
+		"mqtt_state_topic" : "/test-light",
+		"lights_on_default" : true,
+		"num_leds" : 100,
+		"max_brightness" : 255,
+		"frames_per_sec" : 120
+	}
+}

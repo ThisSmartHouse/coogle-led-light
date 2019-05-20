@@ -29,8 +29,22 @@ extern "C" void __coogleiot_mqtt_connect_timer_callback(void *self)
 
 bool CoogleIOT_MQTT::initialize()
 {
+	coogleiot_config_base_t *config;
+
 	mqttClient = new PubSubClient(espClient);
 	os_timer_setfn(&connectTimer, __coogleiot_mqtt_connect_timer_callback, this);
+
+	if(configManager) {
+		if(configManager->loaded) {
+			config = configManager->getConfig();
+
+			setPort(config->mqtt_port);
+			setHostname(config->mqtt_host);
+
+			if(logger)
+				logger->info("[MQTT] Loaded Configuration from Config Manager");
+		}
+	}
 }
 
 void CoogleIOT_MQTT::disconnect()
@@ -296,5 +310,11 @@ CoogleIOT_MQTT& CoogleIOT_MQTT::setLogger(CoogleIOT_Logger *log)
 CoogleIOT_MQTT& CoogleIOT_MQTT::setWifiManager(CoogleIOT_Wifi *wifi)
 {
 	this->wifiManager = wifi;
+	return *this;
+}
+
+CoogleIOT_MQTT& CoogleIOT_MQTT::setConfigManager(CoogleIOT_Config *c)
+{
+	this->configManager = c;
 	return *this;
 }

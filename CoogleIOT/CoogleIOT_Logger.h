@@ -23,7 +23,7 @@
 #define COOGLEIOT_LOGGER_H
 
 #ifndef COOGLEIOT_LOGGER_LOGFILE
-#define COOGLEIOT_LOGGER_LOGFILE "/app-log.txt"
+#define COOGLEIOT_LOGGER_LOGFILE "/app.log"
 #endif
 
 #ifndef COOGLEIOT_LOGGER_MAXSIZE

@@ -25,6 +25,7 @@
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 #include "CoogleIOT_Wifi.h"
+#include "CoogleIOT_Config.h"
 
 #ifndef COOGLEIOT_MQTT_MAX_HOSTNAME_LEN
 #define COOGLEIOT_MQTT_MAX_HOSTNAME_LEN 255
@@ -57,6 +58,7 @@
 
 class CoogleIOT_Logger;
 class CoogleIOT_Wifi;
+class CoogleIOT_Config;
 class PubSubClient;
 
 class CoogleIOT_MQTT
@@ -80,6 +82,8 @@ class CoogleIOT_MQTT
 		CoogleIOT_MQTT& setClientId(const char *);
 		CoogleIOT_MQTT& setLogger(CoogleIOT_Logger *);
 		CoogleIOT_MQTT& setWifiManager(CoogleIOT_Wifi *);
+		CoogleIOT_MQTT& setConfigManager(CoogleIOT_Config *);
+
 		PubSubClient* getClient();
 		CoogleIOT_MQTT& setConnectCallback(void (*)());
 	private:
@@ -95,6 +99,7 @@ class CoogleIOT_MQTT
 
 		CoogleIOT_Logger *logger = NULL;
 		CoogleIOT_Wifi *wifiManager = NULL;
+		CoogleIOT_Config *configManager = NULL;
 
 		void (* connectCallback)() = NULL;
 

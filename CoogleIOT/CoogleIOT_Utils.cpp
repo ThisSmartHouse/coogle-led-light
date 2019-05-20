@@ -1,6 +1,6 @@
 /*
   +----------------------------------------------------------------------+
-  | Coogle LED lighting                                                  |
+  | CoogleIOT for ESP8266                                                |
   +----------------------------------------------------------------------+
   | Copyright (c) 2017-2019 John Coggeshall                              |
   +----------------------------------------------------------------------+
@@ -20,30 +20,29 @@
   +----------------------------------------------------------------------+
 */
 
-/* Memory Split Map for firmware, ota, and a 1.5 MB SPIFFS storage space */
+#include "CoogleIOT_Utils.h"
 
-/**
- * ROM 0: 0x2000 -> 0xF2000 (983,040 bytes)
- * ROM 1: 0x102000 -> 0x1F2000
- * SPIFFS: 0x202000 -> 0x3F7000 (2,150,400 bytes)
- * SDK Config: 0x3FB000 -> 0x400000
- */
- 
-MEMORY
-{
-  dport0_0_seg :                        org = 0x3FF00000, len = 0x10
-  dram0_0_seg :                         org = 0x3FFE8000, len = 0x14000
-  iram1_0_seg :                         org = 0x40100000, len = 0x8000
-  irom0_0_seg :                         org = 0x40202010, len = 0xF0000
+char CoogleIOT_Utils::to_hex(char code) {
+	static char hex[] = "0123456789abcdef";
+	return hex[code & 15];
 }
 
-/**
- * For some silly reason you have to add 0x40200000 to the offset here,
- * even though it's basically just subtracted later in the Arudino library
- */
-PROVIDE ( _SPIFFS_start = 0x40402000 );
-PROVIDE ( _SPIFFS_end = 0x405F7000 );
-PROVIDE ( _SPIFFS_page = 0x100 );
-PROVIDE ( _SPIFFS_block = 0x4000 );
+char *CoogleIOT_Utils::url_encode(char *str)
+{
+	char *pstr = str, *buf = (char *)malloc(strlen(str) * 3 + 1), *pbuf = buf;
 
-INCLUDE "eagle.app.v6.common.ld"
+	while (*pstr) {
+		if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~')
+			*pbuf++ = *pstr;
+		else if (*pstr == ' ')
+			*pbuf++ = '+';
+		else
+			*pbuf++ = '%', *pbuf++ = CoogleIOT_Utils::to_hex(*pstr >> 4), *pbuf++ = CoogleIOT_Utils::to_hex(*pstr & 15);
+
+		pstr++;
+	}
+
+	*pbuf = '\0';
+
+	return buf;
+}

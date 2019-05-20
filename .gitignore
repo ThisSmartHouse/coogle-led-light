@@ -1,6 +1,8 @@
 config.mk
+.DS_Store
 EspStackTraceDecoder.jar
 build/
+data/config.json
 dump.txt
 rboot-api.c
 rboot-api.h
