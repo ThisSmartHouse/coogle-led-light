@@ -96,18 +96,18 @@ void CoogleIOT_NTP::loop()
 
 		if(connectAttempts > COOGLEIOT_NTP_MAX_ATTEMPTS) {
 			if(logger)
-				logger->error("Failed to synchronize local time with NTP");
+				logger->error(F("[NTP] Failed to synchronize local time with NTP"));
 			attemptingSync = false;
 		} else {
 			if(!active()) {
 				if(logger)
-					logger->logPrintf(DEBUG, "NTP Sync attempt #%d", connectAttempts);
+					logger->logPrintf(DEBUG, F("NTP Sync attempt #%d"), connectAttempts);
 				os_timer_arm(&connectTimer, COOGLEIOT_NTP_SYNC_TIMEOUT, false);
 			} else {
 				now = time(nullptr);
 
 				if(logger)
-					logger->info("Time successfully synchronized with NTP server");
+					logger->info(F("[NTP] Time successfully synchronized with NTP server"));
 
 				attemptingSync = false;
 
@@ -122,7 +122,7 @@ void CoogleIOT_NTP::loop()
 		if(WiFiManager) {
 			if(WiFiManager->connected()) {
 				if(logger)
-					logger->debug("No NTP Sync active, retrying sync");
+					logger->debug(F("[NTP] No NTP Sync active, retrying sync"));
 
 				sync();
 			}
@@ -137,12 +137,20 @@ extern "C" void __coogleiot_ntp_connect_timer_callback(void *self)
 	obj->connectTimerTick = true;
 }
 
+CoogleIOT_NTP::~CoogleIOT_NTP()
+{
+	if(timerSet) {
+		os_timer_disarm(&connectTimer);
+	}
+}
+
 bool CoogleIOT_NTP::initialize()
 {
 	if(logger)
-		logger->info("Initializing NTP");
+		logger->info(F("[NTP] Initializing NTP"));
 
 	os_timer_setfn(&connectTimer, __coogleiot_ntp_connect_timer_callback, this);
+	timerSet = true;
 
 	if(WiFiManager) {
 		if(WiFiManager->connected()) {

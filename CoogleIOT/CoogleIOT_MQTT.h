@@ -80,9 +80,15 @@ class CoogleIOT_MQTT
 		CoogleIOT_MQTT& setLWTTopic(const char *);
 		CoogleIOT_MQTT& setLWTMessage(const char *);
 		CoogleIOT_MQTT& setClientId(const char *);
+		
+		const char *getClientId();
+
 		CoogleIOT_MQTT& setLogger(CoogleIOT_Logger *);
 		CoogleIOT_MQTT& setWifiManager(CoogleIOT_Wifi *);
 		CoogleIOT_MQTT& setConfigManager(CoogleIOT_Config *);
+
+		CoogleIOT_MQTT& setClient(WiFiClient *);
+		CoogleIOT_MQTT& setClient(WiFiClientSecure *);
 
 		PubSubClient* getClient();
 		CoogleIOT_MQTT& setConnectCallback(void (*)());
@@ -90,11 +96,15 @@ class CoogleIOT_MQTT
 
 		bool doConnect();
 
-		WiFiClient espClient;
-		PubSubClient *mqttClient;
+		WiFiClient *espClient = NULL;
+		WiFiClientSecure *espClientSecure = NULL;
+
+		PubSubClient *mqttClient = NULL;
 
 		bool active = false;
 		bool attempting = false;
+		bool useSecure = false;
+
 		os_timer_t connectTimer;
 
 		CoogleIOT_Logger *logger = NULL;

@@ -27,10 +27,21 @@ extern "C" void __coogleiot_ota_check_callback(void *self)
 	obj->updateTimerTick = true;
 }
 
-extern "C" void __coogleiot_new_rom_test_callback(void *self)
+CoogleIOT_OTA& CoogleIOT_OTA::setUpgradeAvailableCallback(void (*cb)(const JsonDocument &)) 
 {
-	CoogleIOT_OTA *obj = static_cast<CoogleIOT_OTA *>(self);
-	obj->verifyOTAComplete();
+	upgradeAvailableCallback = cb;
+	return *this;
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::setPostUpgradeCheckCallback(void (*cb)())
+{
+	postUpgradeCheckCallback = cb;
+	return *this;
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::disableAutoOTAVerify()
+{
+	auto_ota_verify = false;
 }
 
 CoogleIOT_OTA& CoogleIOT_OTA::verifyOTAComplete()
@@ -40,29 +51,29 @@ CoogleIOT_OTA& CoogleIOT_OTA::verifyOTAComplete()
 
 	if(!rboot_get_last_boot_mode(&last_boot_mode)) {
 		if(logger)
-			logger->error("[OTA] Failed to get last boot mode");
+			logger->error(F("[OTA] Failed to get last boot mode"));
 		return *this;
 	}
 
 	if(last_boot_mode != MODE_TEMP_ROM) {
 		if(logger)
-			logger->error("[OTA] Cannot call verifyOTAComplete() if not booted into temporary ROM");
+			logger->error(F("[OTA] Cannot call verifyOTAComplete() if not booted into temporary ROM"));
 		return *this;
 	}
 
 	if(logger)
-		logger->info("[OTA] Firmware lives! Setting temporary firmware as real firmware");
+		logger->info(F("[OTA] Firmware lives! Setting temporary firmware as real firmware"));
 
 	newRom = boot_config.current_rom == 0 ? 1 : 0;
 
 	if(!rboot_set_current_rom(newRom)) {
 		if(logger)
-			logger->logPrintf(ERROR, "[OTA] Failed to set new current rom to %d", newRom);
+			logger->logPrintf(ERROR, F("[OTA] Failed to set new current rom to %d"), newRom);
 		return *this;
 	}
 
 	if(logger)
-		logger->logPrintf(INFO, "[OTA] Verification complete! New ROM for device is slot %d", newRom);
+		logger->logPrintf(INFO, F("[OTA] Verification complete! New ROM for device is slot %d"), newRom);
 
 	return *this;
 }
@@ -91,6 +102,12 @@ CoogleIOT_OTA& CoogleIOT_OTA::setCurrentVersion(const char *ver)
 	return *this;
 }
 
+CoogleIOT_OTA& CoogleIOT_OTA::setManifestSize(size_t s)
+{
+	manifest_size = s;
+	return *this;
+}
+
 void CoogleIOT_OTA::check()
 {
 	int httpResponseCode;
@@ -99,24 +116,52 @@ void CoogleIOT_OTA::check()
 	DynamicJsonDocument manifest(manifest_size);
 	DeserializationError err;
 
-	if(!enabled) {
+	if(system_upgrade_flag_check() == COOGLEIOT_UPGRADE_STARTED) {
 		return;
 	}
 
-	if(system_upgrade_flag_check() == COOGLEIOT_UPGRADE_STARTED) {
+	if(!enabled) {
+
+		if(postUpgradeCheckCallback) {
+			postUpgradeCheckCallback();
+		}
+
 		return;
 	}
 
 	if(!ntp->active()) {
 		if(logger)
-			logger->warn("[OTA] Cannot perform OTA check, NTP is not active");
+			logger->warn(F("[OTA] Cannot perform OTA check, NTP is not active"));
+
+		if(postUpgradeCheckCallback) {
+			postUpgradeCheckCallback();
+		}
+
 		return;
 	}
 
-	if(strlen(endpoint) == 0) {
+	if(strlen(endpoint) < 10) {
 		if(logger)
-			logger->warn("[OTA] End point not set");
+			logger->warn(F("[OTA] End point not set"));
+
+		if(postUpgradeCheckCallback) {
+			postUpgradeCheckCallback();
+		}
+
 		return;
+	}
+
+	if(preUpgradeCheckCallback) {
+		if(!preUpgradeCheckCallback()) {
+			if(logger)
+				logger->info(F("[OTA] Skipping check on instruction from callback"));
+
+			if(postUpgradeCheckCallback) {
+				postUpgradeCheckCallback();
+			}
+
+			return;
+		}
 	}
 
 	if(cur_version != NULL) {
@@ -131,18 +176,26 @@ void CoogleIOT_OTA::check()
 		sprintf(endpoint_complete, "%s?current_version=%s", endpoint, encoded_ver);
 
 		free(encoded_ver);
+
 	} else {
-		endpoint_complete = endpoint;
+
+		endpoint_complete = (char *)os_zalloc(strlen(endpoint) + 1);
+		strcpy(endpoint_complete, endpoint);
 	}
 
 	if(logger)
-		logger->logPrintf(INFO, "[OTA] Checking %s for new firmware", endpoint_complete);
+		logger->logPrintf(INFO, F("[OTA] Checking %s for new firmware"), endpoint_complete);
 
 	if(!client->begin(*sslClient, endpoint_complete)) {
 		if(logger)
-			logger->logPrintf(ERROR, "Failed to connect to end point: %s", endpoint_complete);
+			logger->logPrintf(ERROR, F("Failed to connect to end point: %s"), endpoint_complete);
 
 		free(endpoint_complete);
+
+		if(postUpgradeCheckCallback) {
+			postUpgradeCheckCallback();
+		}
+
 		return;
 	}
 
@@ -150,9 +203,15 @@ void CoogleIOT_OTA::check()
 
 	if(httpResponseCode < 0) {
 		if(logger)
-			logger->logPrintf(ERROR, "[OTA] HTTP request to end point '%s' failed: %s", endpoint, client->errorToString(httpResponseCode).c_str());
+			logger->logPrintf(ERROR, F("[OTA] HTTP request to end point '%s' failed: %s"), endpoint, client->errorToString(httpResponseCode).c_str());
 
 		client->end();
+
+		free(endpoint_complete);
+
+		if(postUpgradeCheckCallback) {
+			postUpgradeCheckCallback();
+		}
 
 		return;
 	}
@@ -165,58 +224,72 @@ void CoogleIOT_OTA::check()
 			if(logger)
 				logger->debug(response.c_str());
 
-			err = deserializeJson(manifest, response.c_str());
+			// This is important to cast to (const char *)
+			// ArduinoJson otherwise uses a zero-copy and response.c_str()
+			// won't be around long enough to pass into a callback
+			err = deserializeJson(manifest, (const char *)response.c_str());
 
 			if(err) {
 				if(logger)
-					logger->logPrintf(ERROR, "Failed to deserialize JSON Manifest: %s", err.c_str());
+					logger->logPrintf(ERROR, F("Failed to deserialize JSON Manifest: %s"), err.c_str());
 				break;
 			}
 
 			if(!manifest["version"].is<const char *>()) {
 				if(logger)
-					logger->error("Manifest malformed, invalid version");
+					logger->error(F("Manifest malformed, invalid version"));
 
 				break;
 			}
 
 			if(!manifest["url"].is<const char *>()) {
 				if(logger)
-					logger->error("Manifest malformed, invalid firmware URL");
+					logger->error(F("Manifest malformed, invalid firmware URL"));
 				break;
 			}
 
 			if(strcmp(manifest["version"].as<const char *>(), cur_version) == 0) {
 				if(logger)
-					logger->logPrintf(INFO, "Version available '%s' matches current firmware version", cur_version);
+					logger->logPrintf(INFO, F("Version available '%s' matches current firmware version"), cur_version);
 				break;
 			}
 
 			if(logger)
-				logger->logPrintf(INFO, "New version '%s' available for upgrade!", manifest["version"].as<const char *>());
+				logger->logPrintf(INFO, F("New version '%s' available for upgrade!"), manifest["version"].as<const char *>());
 
 			client->end();
 
-			upgrade(manifest["url"].as<const char *>());
+			free(endpoint_complete);
 
-			if(cur_version != NULL) {
-				free(endpoint_complete);
+			if(upgradeAvailableCallback) {
+				upgradeAvailableCallback(manifest);
+			} else {
+				upgrade(manifest["url"].as<const char *>());
 			}
 
 			return;
 		default:
 
 			if(logger)
-				logger->logPrintf(ERROR, "[OTA] Unexpected HTTP Response Code: %d", httpResponseCode);
+				logger->logPrintf(ERROR, F("[OTA] Unexpected HTTP Response Code: %d"), httpResponseCode);
 
 			break;
 	}
 
 	client->end();
 
-	if(cur_version != NULL) {
-		free(endpoint_complete);
+	free(endpoint_complete);
+
+	if(postUpgradeCheckCallback) {
+		postUpgradeCheckCallback();
 	}
+
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::setPreUpgradeCheckCallback(bool (*cb)())
+{
+	preUpgradeCheckCallback = cb;
+	return *this;
 }
 
 CoogleIOT_OTA& CoogleIOT_OTA::setOTACompleteCallback(void (*cb)())
@@ -228,37 +301,36 @@ CoogleIOT_OTA& CoogleIOT_OTA::setOTACompleteCallback(void (*cb)())
 void CoogleIOT_OTA::upgrade(const char *url)
 {
 	int httpResponseCode;
-
-	if(!client->begin(*sslClient, url)) {
+	
+	if(!insecureClient->begin(url)) {
 		if(logger)
-			logger->logPrintf(ERROR, "Failed to connect to end point: %s", url);
+			logger->logPrintf(ERROR, F("Failed to connect to end point: %s"), url);
 		return;
 	}
 
-	httpResponseCode = client->GET();
+	httpResponseCode = insecureClient->GET();
 
 	if(httpResponseCode < 0) {
 		if(logger)
-			logger->logPrintf(ERROR, "[OTA] HTTP request to end point '%s' failed: %s", url, client->errorToString(httpResponseCode).c_str());
+			logger->logPrintf(ERROR, F("[OTA] HTTP request to end point '%s' failed: %s"), url, insecureClient->errorToString(httpResponseCode).c_str());
 
-		if(client->connected())
-			client->end();
+		if(insecureClient->connected())
+			insecureClient->end();
 
 		return;
 	}
 
 	if(httpResponseCode != HTTP_CODE_OK) {
 		if(logger)
-			logger->logPrintf(ERROR, "[OTA] Unexpected HTTP Response Code: %d", httpResponseCode);
+			logger->logPrintf(ERROR, F("[OTA] Unexpected HTTP Response Code: %d"), httpResponseCode);
 
-		if(client->connected())
-			client->end();
+		if(insecureClient->connected())
+			insecureClient->end();
 
 		return;
 	}
 
-
-	firmware_remaining = client->getSize();
+	firmware_remaining = insecureClient->getSize();
 	firmware_size = firmware_remaining;
 
 	upgrade_target = (boot_config.current_rom == 0) ? 1 : 0;
@@ -268,10 +340,10 @@ void CoogleIOT_OTA::upgrade(const char *url)
 	system_upgrade_flag_set(COOGLEIOT_UPGRADE_STARTED);
 
 	if(logger) {
-		logger->info("Firmware Upgrade");
-		logger->logPrintf(INFO, "Firmware Size: %d", firmware_size);
-		logger->logPrintf(INFO, "Upgrade Slot: %d", upgrade_target);
-		logger->info("Downloading Firmware....");
+		logger->info(F("Firmware Upgrade"));
+		logger->logPrintf(INFO, F("Firmware Size: %d"), firmware_size);
+		logger->logPrintf(INFO, F("Upgrade Slot: %d"), upgrade_target);
+		logger->info(F("Downloading Firmware...."));
 	}
 
 }
@@ -280,26 +352,29 @@ bool CoogleIOT_OTA::writeChunk()
 {
 	uint8_t readBuffer[512] = {NULL};
 	size_t available_data, bytes_read;
+	
+	int percentage;
+	static int next_percentage = 0;
 
 	if(firmware_remaining == 0) {
 		return finishUpgrade();
 	}
 
-	if(!client->connected()) {
+	if(!insecureClient->connected()) {
 		if(logger)
-			logger->error("Client is unexpectantly disconnected!");
+			logger->error(F("Client is unexpectantly disconnected!"));
 
 		return false;
 	}
 
-	available_data = sslClient->available();
+	available_data = insecureClient->getStreamPtr()->available();
 
 	if(available_data > 0) {
-		bytes_read = sslClient->readBytes(readBuffer, ((available_data > sizeof(readBuffer)) ? sizeof(readBuffer) : available_data));
+		bytes_read = insecureClient->getStreamPtr()->readBytes(readBuffer, ((available_data > sizeof(readBuffer)) ? sizeof(readBuffer) : available_data));
 
 		if(!rboot_write_flash(&upgrade_write_status, &readBuffer[0], bytes_read)) {
 			if(logger)
-				logger->logPrintf(ERROR, "[OTA] Failed to write chunk (%d byte(s)) to flash!", bytes_read);
+				logger->logPrintf(ERROR, F("[OTA] Failed to write chunk (%d byte(s)) to flash!"), bytes_read);
 
 			return false;
 		}
@@ -308,8 +383,19 @@ bool CoogleIOT_OTA::writeChunk()
 			firmware_remaining -= bytes_read;
 		}
 
-		if(logger)
-			logger->logPrintf(INFO, "Remaining to Download: %d", firmware_remaining);
+		if(logger) {
+
+			percentage = ((float)(firmware_size - firmware_remaining) / (float)firmware_size) * 100;
+
+			if(next_percentage == 0) {
+				next_percentage = percentage;
+			}
+
+			if((percentage >= next_percentage) && (percentage > 0)) {
+				logger->logPrintf(INFO, F("[OTA] Upgrade %d%% complete"), percentage);
+				next_percentage = percentage - (percentage % 10) + 10;
+			}
+		}
 
 	}
 
@@ -321,18 +407,18 @@ bool CoogleIOT_OTA::finishUpgrade()
 	uint8_t newRom;
 
 	if(logger)
-		logger->info("[OTA] Firmware write complete!");
+		logger->info(F("[OTA] Firmware write complete!"));
 
 	system_upgrade_flag_set(COOGLEIOT_UPGRADE_FINISHED);
 
 	newRom = (rboot_get_current_rom() == 0) ? 1 : 0;
 
 	if(logger)
-		logger->logPrintf(INFO, "Switching to ROM #%d", newRom);
+		logger->logPrintf(INFO, F("Switching to ROM #%d"), newRom);
 
 	if(!rboot_set_temp_rom(newRom)) {
 		if(logger)
-			logger->logPrintf(ERROR, "Failed to set temporary boot target #%d", newRom);
+			logger->logPrintf(ERROR, F("Failed to set temporary boot target #%d"), newRom);
 		return false;
 	}
 
@@ -345,6 +431,10 @@ bool CoogleIOT_OTA::finishUpgrade()
 
 CoogleIOT_OTA::~CoogleIOT_OTA()
 {
+	if(insecureClient) {
+		delete insecureClient;
+	}
+	
 	if(client) {
 		delete client;
 	}
@@ -378,33 +468,63 @@ CoogleIOT_OTA::~CoogleIOT_OTA()
 	}
 }
 
+CoogleIOT_OTA& CoogleIOT_OTA::setSSLClient(BearSSL::WiFiClientSecure *c)
+{
+	sslClient = c;
+	return *this;
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::disableOtaCheckTimer()
+{
+	os_timer_disarm(&ota_check_timer);
+	updateTimerTick = false;
+	return *this;
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::enableOtaCheckTimer()
+{
+	os_timer_arm(&ota_check_timer, COOGLEIOT_OTA_CHECK_FOR_UPGRADE_DELAY, true);
+	return *this;
+}
+
+CoogleIOT_OTA& CoogleIOT_OTA::setUpgradeVerifyCallback(void (*cb)())
+{
+	upgradeVerifyCallback = cb;
+	return *this;
+}
+
 void CoogleIOT_OTA::initialize()
 {
 	uint8_t last_boot_mode;
 	coogleiot_config_base_t *config;
 
 	if(logger)
-		logger->info("[OTA] Initializing Over-The-Air Firmware Updates");
+		logger->info(F("[OTA] Initializing Over-The-Air Firmware Updates"));
 
-	os_timer_setfn(&new_rom_test_timer, __coogleiot_new_rom_test_callback, this);
 	os_timer_setfn(&ota_check_timer, __coogleiot_ota_check_callback, this);
-	os_timer_arm(&ota_check_timer, COOGLEIOT_OTA_CHECK_FOR_UPGRADE_DELAY, true);
+
+	enableOtaCheckTimer();
 
 	client = new HTTPClient;
-	sslClient = new BearSSL::WiFiClientSecure;
+	insecureClient = new HTTPClient;
 
-	if(!loadAuthorities()) {
-		disable();
+	if(!sslClient) {
+		sslClient = new BearSSL::WiFiClientSecure;
 
-		if(logger)
-			logger->error("[OTA] Failed to load certificate authorities for SSL, OTA disabled.");
+		if(!loadAuthorities()) {
+			disable();
+
+			if(logger)
+				logger->error(F("[OTA] Failed to load certificate authorities for SSL, OTA disabled."));
+		}
+
 	}
 
 	if(ntp == NULL) {
 		disable();
 
 		if(logger)
-			logger->error("[OTA] OTA requires the NTP Manager, OTA disabled.");
+			logger->error(F("[OTA] OTA requires the NTP Manager, OTA disabled."));
 
 	}
 
@@ -414,15 +534,15 @@ void CoogleIOT_OTA::initialize()
 
 	if(!rboot_get_last_boot_mode(&last_boot_mode)) {
 		if(logger)
-			logger->error("[OTA] Failed to get last boot mode from rBoot!");
+			logger->error(F("[OTA] Failed to get last boot mode from rBoot!"));
 
 		last_boot_mode = MODE_STANDARD;
 	}
 
-	if(last_boot_mode == MODE_TEMP_ROM) {
-		if(logger)
-			logger->logPrintf(INFO, "[OTA] Setting timer for %d milliseconds to make sure we don't crash before verifying new firmware...", COOGLEIOT_OTA_VERIFICATION_WAIT_TIME);
-		os_timer_arm(&new_rom_test_timer, COOGLEIOT_OTA_VERIFICATION_WAIT_TIME, false);
+	if((last_boot_mode == MODE_TEMP_ROM) ) {
+		if(upgradeVerifyCallback) {
+			upgradeVerifyCallback();
+		}
 	}
 
 	if(configManager) {
@@ -432,7 +552,7 @@ void CoogleIOT_OTA::initialize()
 			if(config->ota_check_on_boot) {
 				if(last_boot_mode == MODE_TEMP_ROM) {
 					if(logger)
-						logger->info("[OTA] Skipping OTA on initialize request, currently booted in temporary ROM");
+						logger->info(F("[OTA] Skipping OTA on initialize request, currently booted in temporary ROM"));
 				} else {
 					updateTimerTick = true;
 				}
@@ -442,7 +562,7 @@ void CoogleIOT_OTA::initialize()
 				setOTAManifestEndpoint(config->ota_endpoint);
 
 				if(logger)
-					logger->logPrintf(INFO, "[OTA] Upgrade Manifest URL set to %s", config->ota_endpoint);
+					logger->logPrintf(INFO, F("[OTA] Upgrade Manifest URL set to %s"), config->ota_endpoint);
 			}
 		}
 	}
@@ -451,14 +571,16 @@ void CoogleIOT_OTA::initialize()
 void CoogleIOT_OTA::loop()
 {
 	if(updateTimerTick) {
-		updateTimerTick = false;
+		disableOtaCheckTimer();
+		yield();
 		check();
+		enableOtaCheckTimer();
 	}
 
 	if(system_upgrade_flag_check() == COOGLEIOT_UPGRADE_STARTED) {
 		if(!writeChunk()) {
 			if(logger)
-				logger->error("[OTA] Failed to write firmware chunk, aborting");
+				logger->error(F("[OTA] Failed to write firmware chunk, aborting"));
 
 			if(client->connected())
 				client->end();
@@ -472,6 +594,13 @@ bool CoogleIOT_OTA::loadAuthorities()
 {
 	int numCertificates;
 
+	if(!SPIFFS.exists("/certs.ar")) {
+		if(logger)
+			logger->warn(F("[OTA] Cannot locate /certs.ar - no certificates loaded"));
+
+		return false;
+	}
+
 	certs_idx = new SPIFFSCertStoreFile("/certs.idx");
 	certs_ar  = new SPIFFSCertStoreFile("/certs.ar");
 	cert_store = new BearSSL::CertStore;
@@ -481,17 +610,17 @@ bool CoogleIOT_OTA::loadAuthorities()
 	sslClient->setCertStore(cert_store);
 
 	if(logger)
-		logger->logPrintf(INFO, "[OTA] Loaded %d certificates into certificate store", numCertificates);
+		logger->logPrintf(INFO, F("[OTA] Loaded %d certificates into certificate store"), numCertificates);
 
 #ifdef COOGLEIOT_ALLOW_INSECURE_SSL
 	if(logger)
-		logger->warn("[OTA] Allowing Insecure SSL connections");
+		logger->warn(F("[OTA] Allowing Insecure SSL connections"));
 
 	sslClient->setInsecure();
 #endif
 
 	if(logger)
-		logger->info("[OTA] Certificate Authority Loaded");
+		logger->info(F("[OTA] Certificate Authority Loaded"));
 
 	return true;
 }

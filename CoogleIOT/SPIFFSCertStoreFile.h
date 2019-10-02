@@ -1,3 +1,6 @@
+#ifndef COOGLEIOT_SPIFFS_CERT_H_
+#define COOGLEIOT_SPIFFS_CERT_H_
+
 #include <FS.h>
 
 class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
@@ -37,3 +40,4 @@ class SPIFFSCertStoreFile : public BearSSL::CertStoreFile {
 		const char *_name;
 };
 
+#endif

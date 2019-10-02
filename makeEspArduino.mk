@@ -34,14 +34,18 @@ ESP_ADDR ?= ESP_123456
 ESP_PORT ?= 8266
 ESP_PWD ?= 123
 
+
 # HTTP update parameters
 HTTP_ADDR ?= ESP_123456
 HTTP_URI ?= /update
 HTTP_PWD ?= user
 HTTP_USR ?= password
 
+# Make sure these match what you put in app.ld!
 SPIFFS_ADDR ?= 0x202000
 SPIFFS_SIZE ?= 0x1F5000
+SPIFFS_PAGE_SIZE ?= 0x80
+SPIFFS_BLOCK_SIZE ?= 0x1000
 
 PROJECT_DIRECTORY = $(shell pwd)
 PROJECT_BUILD_IDENTIFIER = $(shell basename $(PROJECT_DIRECTORY))
@@ -245,22 +249,23 @@ BUILD_INFO_H = $(BUILD_DIR)/buildinfo.h
 BUILD_INFO_CPP = $(BUILD_DIR)/buildinfo.c++
 BUILD_INFO_OBJ = $(BUILD_INFO_CPP)$(OBJ_EXT)
 
+BLOBSDK = NONOSDK221
 ESPTOOL2 ?= ../esptool2/esptool2
 FW_SECTS      = .text .data .rodata
 FW_USER_ARGS  = -quiet -bin -boot2 -iromchksum
 ELF_FILE = $(BUILD_DIR)/$(MAIN_NAME).elf
 OBJCOPY = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-objcopy
 LIBMAIN_DST = $(BUILD_DIR)/libmain2.a
-LIBMAIN_SRC = $(SDK_ROOT)/lib/libmain.a
+LIBMAIN_SRC = $(SDK_ROOT)/lib/${BLOBSDK}/libmain.a
 
 LINKER_LIBS = main2 hal phy pp net80211 lwip2-536-feat wpa crypto wps bearssl axtls espnow smartconfig airkiss wpa2 stdc++ m c gcc
 LINKER_LIBS := $(addprefix -l, $(LINKER_LIBS))
 
-LINKER_CMD = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc -fno-exceptions -Wl,--gc-sections -Wl,-Map -Wl,$(BUILD_DIR)/$(MAIN_NAME).map -g -w -Os -nostdlib -Wl,--no-check-sections -u app_entry -u Cache_Read_Enable_New -u _printf_float -u _scanf_float -Wl,-static -L$(BUILD_DIR) -L$(SDK_ROOT)/lib -L$(SDK_ROOT)/ld -L$(SDK_ROOT)/libc/xtensa-lx106-elf/lib -T$(MAIN_NAME).ld -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read -o $(ELF_FILE) -Wl,--start-group $(LINKER_LIBS) $(BUILD_DIR)/arduino.ar $(sort $(USER_OBJ)) $(BUILD_DIR)/buildinfo.c++.o  -Wl,--end-group
+LINKER_CMD = $(TOOLS_ROOT)/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc -fno-exceptions -Wl,--gc-sections -Wl,-Map -Wl,$(BUILD_DIR)/$(MAIN_NAME).map -g -w -Os -nostdlib -Wl,--no-check-sections -u app_entry -u Cache_Read_Enable_New -u _printf_float -u _scanf_float -Wl,-static -L$(BUILD_DIR) -L$(SDK_ROOT)/lib/${BLOBSDK} -L$(SDK_ROOT)/lib -L$(SDK_ROOT)/ld -L$(SDK_ROOT)/libc/xtensa-lx106-elf/lib -T$(MAIN_NAME).ld -Wl,--gc-sections -Wl,-wrap,system_restart_local -Wl,-wrap,spi_flash_read -o $(ELF_FILE) -Wl,--start-group $(LINKER_LIBS) $(BUILD_DIR)/arduino.ar $(sort $(USER_OBJ)) $(BUILD_DIR)/buildinfo.c++.o  -Wl,--end-group
 ESPTOOL_PY ?= /usr/local/bin/esptool.py
 
 $(BUILD_INFO_H): | $(BUILD_DIR)
-	echo "typedef struct { const char *date, *time, *src_version, *env_version;} _tBuildInfo; extern _tBuildInfo _BuildInfo;" >$@
+	echo "#ifndef APP_BUILD_INFO_H_\n#define APP_BUILD_INFO_H_\ntypedef struct { const char *date, *time, *src_version, *env_version;} _tBuildInfo; extern _tBuildInfo _BuildInfo;\n#endif" >$@
 
 # Build rules for the different source file types
 $(BUILD_DIR)/%.cpp$(OBJ_EXT): %.cpp $(BUILD_INFO_H) $(ARDUINO_MK)
@@ -313,6 +318,7 @@ $(LIBMAIN_DST): $(LIBMAIN_SRC)
 $(MAIN_EXE): $(LIBMAIN_DST) $(ELF_FILE)
 	echo Building $(MAIN_EXE)
 	$(ESPTOOL2) $(FW_USER_ARGS) $(ELF_FILE) $(MAIN_EXE) $(FW_SECTS)
+	echo $(SIZE_COM)
 	$(SIZE_COM) | perl -e "$$MEM_USAGE" "$(MEM_FLASH)" "$(MEM_RAM)"
 ifneq ($(LWIP_INFO),)
 	printf "LwIPVariant: $(LWIP_INFO)\n"
@@ -324,8 +330,8 @@ endif
 
 upload flash: all $(FS_IMAGE)
 	#echo $(UPLOAD_COM)
-	echo $(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE)
-	$(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE)
+	echo $(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE) 0x3fc000 esp_init_data_default.bin
+	$(ESPTOOL_PY) write_flash -fs 4MB 0x0000 $(BOOT_LOADER) 0x2000 $(MAIN_EXE) $(SPIFFS_ADDR) $(FS_IMAGE) 0x3fc000 esp_init_data_default.bin
 	#$(ESPTOOL) -bz 4M -cd ck -cb $(UPLOAD_SPEED) -ca 0x00000 -cf $(BOOT_LOADER) -ca 0x2000 $(MAIN_EXE)"
 
 vars: 
@@ -342,7 +348,7 @@ http: all
 
 $(FS_IMAGE): $(ARDUINO_MK) $(wildcard $(FS_DIR)/*)
 	echo Generating filesystem image: $(FS_IMAGE)
-	$(TOOLS_ROOT)/mkspiffs/mkspiffs -b 4096 -s $(SPIFFS_SIZE) -c $(FS_DIR) $(FS_IMAGE)
+	$(TOOLS_ROOT)/mkspiffs/mkspiffs -b $(SPIFFS_BLOCK_SIZE) -s $(SPIFFS_SIZE) -p $(SPIFFS_PAGE_SIZE) -c $(FS_DIR) $(FS_IMAGE)
 
 fs: $(FS_IMAGE)
 

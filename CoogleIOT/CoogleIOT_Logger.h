@@ -35,22 +35,13 @@
 #include <time.h>
 #include <FS.h>
 #include "CoogleIOT_NTP.h"
+#include "CoogleIOT_MQTT.h"
 #include "CoogleIOT_Logger_Severity.h"
-
-#ifdef COOGLEIOT_WITH_REMOTEDEBUG
-#include <RemoteDebug.h>
-
-#ifndef COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME
-#define COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME Debug
-#endif
-
-#endif
-
-
 
 extern HardwareSerial Serial;
 
 class CoogleIOT_NTP;
+class CoogleIOT_MQTT;
 
 class CoogleIOT_Logger
 {
@@ -66,12 +57,12 @@ class CoogleIOT_Logger
 		bool streamEnabled();
 
 		CoogleIOT_Logger& setNTPManager(CoogleIOT_NTP *);
+		CoogleIOT_Logger& setMQTTManager(CoogleIOT_MQTT *, const char *);
 
 		CoogleIOT_Logger& warn(String &);
 		CoogleIOT_Logger& error(String &);
 		CoogleIOT_Logger& critical(String &);
 		CoogleIOT_Logger& log(String &, CoogleIOT_Logger_Severity);
-		CoogleIOT_Logger& logPrintf(CoogleIOT_Logger_Severity, const char *, ...);
 		CoogleIOT_Logger& debug(String &);
 		CoogleIOT_Logger& info(String &);
 		char *buildLogMsg(String &, CoogleIOT_Logger_Severity);
@@ -84,6 +75,16 @@ class CoogleIOT_Logger
 		CoogleIOT_Logger& info(const char *);
 		char *buildLogMsg(const char *, CoogleIOT_Logger_Severity);
 
+		CoogleIOT_Logger& error(const __FlashStringHelper *);
+		CoogleIOT_Logger& critical(const __FlashStringHelper *);
+		CoogleIOT_Logger& warn(const __FlashStringHelper *);
+		CoogleIOT_Logger& debug(const __FlashStringHelper *);
+		CoogleIOT_Logger& info(const __FlashStringHelper *);
+		CoogleIOT_Logger& log(const __FlashStringHelper *, CoogleIOT_Logger_Severity);
+
+		CoogleIOT_Logger& logPrintf(CoogleIOT_Logger_Severity, const char *, ...);
+		CoogleIOT_Logger& logPrintf(CoogleIOT_Logger_Severity, const __FlashStringHelper *, ...);
+
 		char *getLogs();
 		File& getLogFile();
 		char *getTimestampAsString();
@@ -91,6 +92,8 @@ class CoogleIOT_Logger
 	private:
 		File logFile;
 		Stream *_stream;
+		char *mqttLogTopic = NULL;
+		CoogleIOT_MQTT *mqttManager = NULL;
 		CoogleIOT_NTP *ntpManager = NULL;
 };
 #endif

@@ -77,21 +77,21 @@ char *CoogleIOT_Wifi::getLocalAPPassword()
 	return retval;
 }
 
-char *CoogleIOT_Wifi::getRemoteStatus()
+const char *CoogleIOT_Wifi::getRemoteStatus()
 {
     switch(WiFi.status()) {
         case WL_CONNECTED:
-            return "Connected";
+            return PSTR("Connected");
         case WL_NO_SSID_AVAIL:
-            return "No SSID Available";
+            return PSTR("No SSID Available");
         case WL_CONNECT_FAILED:
-            return "Failed to Connect";
+            return PSTR("Failed to Connect");
         case WL_IDLE_STATUS:
-            return "Idle";
+            return PSTR("Idle");
         case WL_DISCONNECTED:
-        	return "Disconnected";
+        	return PSTR("Disconnected");
         default:
-            return "Unknown";
+            return PSTR("Unknown");
     }
 }
 
@@ -169,17 +169,15 @@ bool CoogleIOT_Wifi::connect()
 	wifiFailuresCount = 0;
 
 	if(strlen(remoteAPName) == 0) {
-		if(logger)
-			logger->info("Cannot connect to WiFi as no SSID was provided");
 		return false;
 	}
 
 	if(logger)
-		logger->logPrintf(INFO, "Attempting to Connect to SSID: %s", remoteAPName);
+		logger->logPrintf(INFO, F("[WIFI] Attempting to Connect to SSID: %s"), remoteAPName);
 
 	if(strlen(remoteAPPassword) == 0) {
 		if(logger)
-			logger->warn("Remote AP is an open network");
+			logger->warn(F("[WIFI] Remote AP is an open network"));
 
 		WiFi.begin(remoteAPName, NULL, 0, NULL, true);
 	} else {
@@ -207,26 +205,115 @@ void CoogleIOT_Wifi::loop()
 		wifiFailuresCount++;
 
 		if(logger)
-			logger->logPrintf(INFO, "WiFi Connect Attempt %d: %s", wifiFailuresCount, getRemoteStatus());
+			logger->logPrintf(INFO, F("[WIFI] Waiting for connection, current status: %s"), getRemoteStatus());
 
 		if(wifiFailuresCount > COOGLEIOT_WIFI_MAX_ATTEMPTS) {
 			if(logger)
-				logger->error("Failed to connect to WiFi, giving up.");
+				logger->error(F("[WIFI] Failed to connect to WiFi"));
 			attemptingConnection = false;
 		} else {
 			if(!connected()) {
 				os_timer_arm(&wifiConnectTimer, COOGLEIOT_WIFI_CONNECT_TIMEOUT, false);
 			} else {
-				if(logger)
-					logger->logPrintf(INFO, "Success! IP Address: %s", WiFi.localIP().toString().c_str());
+				
+				if(logger) {
+					logger->logPrintf(INFO, F("[WIFI] Connect success! IP Address: %s"), WiFi.localIP().toString().c_str());
+					logger->logPrintf(INFO, F("[WIFI] DNS Server: %s"), WiFi.dnsIP(0).toString().c_str());
+				}
+
 				attemptingConnection = false;
 			}
 		}
 	}
 
-	if(!connected() && !attemptingConnection) {
-		connect();
+	if(!ap_mode) {
+
+		if(!connected() && !attemptingConnection) {
+			connect();
+		}
+	} else {
+		setAPMode();
 	}
+}
+
+CoogleIOT_Wifi& CoogleIOT_Wifi::setStationMode()
+{
+	WiFi.persistent(false);
+	WiFi.disconnect(true);
+
+	WiFi.setAutoConnect(false);
+	WiFi.setAutoReconnect(true);
+	WiFi.mode(WIFI_STA);
+
+	os_timer_setfn(&wifiConnectTimer, __coogleiot_wifi_connect_timer_callback, this);
+
+	connect();
+}
+
+CoogleIOT_Wifi& CoogleIOT_Wifi::setAPMode()
+{
+	char *ap_name;
+	IPAddress ourIP(192,168,57,1);
+	IPAddress subnet(255,255,255,0);
+	IPAddress ap_ip;
+
+	if(ap_active) {
+		return *this;
+	}
+
+	ap_name = getLocalAPName();
+
+	WiFi.mode(WIFI_AP_STA);
+	
+	WiFi.softAPConfig(ourIP, ourIP, subnet);
+
+	if(!WiFi.softAP(ap_name)) {
+		if(logger)
+			logger->error(F("[WIFI] Failed to initialize Soft AP"));
+
+		free(ap_name);
+		return *this;
+	}
+
+	if(logger) {
+		ap_ip = WiFi.softAPIP();
+		logger->logPrintf(INFO, F("[WIFI] Initialized Soft AP '%s' with IP %u.%u.%u.%u"), ap_name, ap_ip[0], ap_ip[1], ap_ip[2], ap_ip[3]);
+	}
+
+	ap_active = true;
+
+	free(ap_name);
+
+	return *this;
+}
+
+CoogleIOT_Wifi& CoogleIOT_Wifi::enableAP()
+{
+	if(ap_active) {
+		return *this;
+	}
+
+	ap_mode = true;
+	ap_active = false;
+
+	return *this;
+}
+
+CoogleIOT_Wifi& CoogleIOT_Wifi::disableAP()
+{
+	if(!ap_active) {
+		return *this;
+	}
+
+	ap_mode = false;
+	ap_active = false;
+
+	WiFi.softAPdisconnect(true);
+
+	if(logger)
+		logger->info(F("[WIFI] Disabling Soft AP"));
+
+	return *this;
 }
 
 bool CoogleIOT_Wifi::initialize()
@@ -234,33 +321,25 @@ bool CoogleIOT_Wifi::initialize()
 	coogleiot_config_base_t *config;
 
 	if(logger)
-		logger->info("Initializing WiFiManager");
+		logger->info(F("[WIFI] Initializing Wifi Management"));
 
 	if(configManager) {
 		if(configManager->loaded) {
 			config = configManager->getConfig();
 			setRemoteAPName(config->wifi_ssid);
 			setRemoteAPPassword(config->wifi_pass);
+			setHostname(config->hostname);
+			setLocalAPName(config->ap_name);
+			setLocalAPPassword(config->ap_pass);
 		}
 	}
 
-	if(strlen(hostname) <= 0) {
-		char tmp[17];
-		sprintf(tmp, "coogleiot-%06x", ESP.getChipId());
-		setHostname(tmp);
-
-		if(logger)
-			logger->logPrintf(WARNING, "Host name not provided, set automatically to '%s'", hostname);
+	if(!ap_mode) {
+		setStationMode();
+	} else {
+		setAPMode();
 	}
 
-	WiFi.disconnect();
-	WiFi.setAutoConnect(false);
-	WiFi.setAutoReconnect(true);
-	WiFi.mode(WIFI_AP_STA);
-
-	os_timer_setfn(&wifiConnectTimer, __coogleiot_wifi_connect_timer_callback, this);
-
-	connect();
 }
 
 bool CoogleIOT_Wifi::connected()

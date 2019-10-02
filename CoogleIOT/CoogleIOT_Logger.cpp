@@ -61,6 +61,19 @@ CoogleIOT_Logger& CoogleIOT_Logger::setStream(Stream *stream)
 	return *this;
 }
 
+CoogleIOT_Logger& CoogleIOT_Logger::setMQTTManager(CoogleIOT_MQTT *_mqttManager, const char *topic)
+{
+	size_t topicLen = (strlen(topic) > COOGLEIOT_MQTT_MAX_LWT_TOPIC_LEN ? COOGLEIOT_MQTT_MAX_LWT_TOPIC_LEN : strlen(topic)) + 1;
+
+	mqttManager = _mqttManager;
+
+	mqttLogTopic = (char *)os_zalloc(topicLen);
+	strncpy(mqttLogTopic, topic, topicLen);
+	mqttLogTopic[topicLen] = NULL;
+
+	return *this;
+}
+
 CoogleIOT_Logger& CoogleIOT_Logger::setNTPManager(CoogleIOT_NTP *_ntpManager)
 {
 	ntpManager = _ntpManager;
@@ -170,6 +183,46 @@ char *CoogleIOT_Logger::buildLogMsg(const char *msg, CoogleIOT_Logger_Severity s
 	return retval;
 }
 
+CoogleIOT_Logger& CoogleIOT_Logger::logPrintf(CoogleIOT_Logger_Severity severity, const __FlashStringHelper *_format, ...)
+{
+	va_list arg;
+
+	char temp[64];
+	char* buffer = temp;
+	char *format;
+	size_t length, len;
+
+	length = strlen_P((PGM_P)_format);
+	format = (char *)malloc(length + 1) ;
+	memcpy_P(format, (PGM_P)_format, length + 1);
+
+	va_start(arg, format);
+
+	len = vsnprintf(temp, sizeof(temp), format, arg);
+	va_end(arg);
+
+	if (len > sizeof(temp) - 1) {
+		buffer = new char[len + 1];
+		if (!buffer) {
+			return *this;
+		}
+		va_start(arg, format);
+		vsnprintf(buffer, len + 1, format, arg);
+		va_end(arg);
+	}
+
+	log(buffer, severity);
+
+	if (buffer != temp) {
+		delete[] buffer;
+	}
+
+	free(format);
+
+	return *this;
+
+}
+
 CoogleIOT_Logger& CoogleIOT_Logger::logPrintf(CoogleIOT_Logger_Severity severity, const char *format, ...)
 {
     va_list arg;
@@ -213,10 +266,97 @@ CoogleIOT_Logger& CoogleIOT_Logger::warn(String& msg)
 	return log(msg.c_str(), WARNING);
 }
 
+CoogleIOT_Logger& CoogleIOT_Logger::error(const __FlashStringHelper *msg)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, ERROR);
+
+	free(buffer);
+	return *this;
+}
+
+CoogleIOT_Logger& CoogleIOT_Logger::critical(const __FlashStringHelper *msg)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, CRITICAL);
+
+	free(buffer);
+	return *this;
+}
+
+CoogleIOT_Logger& CoogleIOT_Logger::debug(const __FlashStringHelper *msg)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, DEBUG);
+
+	free(buffer);
+	return *this;
+}
+
+CoogleIOT_Logger& CoogleIOT_Logger::info(const __FlashStringHelper *msg)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, INFO);
+
+	free(buffer);
+	return *this;
+
+}
+
+CoogleIOT_Logger& CoogleIOT_Logger::warn(const __FlashStringHelper *msg)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, WARNING);
+
+	free(buffer);
+	return *this;
+}
+
+CoogleIOT_Logger& CoogleIOT_Logger::log(const __FlashStringHelper *msg, CoogleIOT_Logger_Severity severity)
+{
+	char *buffer;
+	size_t length = strlen_P((PGM_P)msg);
+
+	buffer = (char *)malloc(length + 1) ;
+	memcpy_P(buffer, (PGM_P)msg, length + 1);
+
+	log(buffer, severity);
+
+	free(buffer);
+	return *this;
+
+}
+
 CoogleIOT_Logger& CoogleIOT_Logger::error(String& msg)
 {
 	return log(msg.c_str(), ERROR);
 }
+
 
 CoogleIOT_Logger& CoogleIOT_Logger::critical(String& msg)
 {
@@ -288,10 +428,10 @@ bool CoogleIOT_Logger::initialize()
 	logFile = SPIFFS.open(COOGLEIOT_LOGGER_LOGFILE, "a+");
 
 	if(!logFile) {
-		error("Could not open SPIFFS Log file!");
+		error(PSTR("Could not open SPIFFS Log file!"));
 		return false;
 	} else {
-		printf("Log file '%s' successfully opened", COOGLEIOT_LOGGER_LOGFILE);
+		logPrintf(INFO, PSTR("Log file '%s' successfully opened"), COOGLEIOT_LOGGER_LOGFILE);
 		return true;
 	}
 }
@@ -304,34 +444,13 @@ CoogleIOT_Logger& CoogleIOT_Logger::log(const char *msg, CoogleIOT_Logger_Severi
 		_stream->println(logMsg);
 	}
 
-#ifdef COOGLEIOT_WITH_REMOTEDEBUG
-
-	switch(severity) {
-		case DEBUG:
-			if(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.isActive(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.DEBUG)) {
-				COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.println(logMsg);
-			}
-			break;
-		case INFO:
-			if(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.isActive(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.INFO)) {
-				COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.println(logMsg);
-			}
-			break;
-		case WARNING:
-			if(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.isActive(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.WARNING)) {
-				COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.println(logMsg);
-			}
-			break;
-		default:
-		case CRITICAL:
-		case ERROR:
-			if(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.isActive(COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.ERROR)) {
-				COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME.println(logMsg);
-			}
-			break;
+	if(mqttManager) {
+		if(mqttManager->connected()) {
+			yield();
+			mqttManager->getClient()->publish(mqttLogTopic, logMsg);
+			yield();
+		}
 	}
-
-#endif
 
 	if(!logFile) {
 
@@ -347,7 +466,7 @@ CoogleIOT_Logger& CoogleIOT_Logger::log(const char *msg, CoogleIOT_Logger_Severi
 
 		if(!logFile) {
 			if(_stream) {
-				_stream->println("[CRITICAL] ERROR Could not open SPIFFS log file!");
+				_stream->println(F("[CRITICAL] ERROR Could not open SPIFFS log file!"));
 			}
 
 			free(logMsg);
@@ -358,6 +477,7 @@ CoogleIOT_Logger& CoogleIOT_Logger::log(const char *msg, CoogleIOT_Logger_Severi
 
 
 	logFile.println(logMsg);
+	logFile.flush();
 
 	free(logMsg);
 

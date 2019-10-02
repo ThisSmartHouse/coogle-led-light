@@ -20,9 +20,11 @@ APP_DEFINES := MQTT_MAX_PACKET_SIZE=512 \
 			   ESP8266 \
 			   FASTLED_ESP8266_NODEMCU_PIN_ORDER \
 			   BOOT_BIG_FLASH \
-			   $(APP_DEFINES) \
+			   $(APP_DEFINES) 
+			   #DEBUG_ESP_PORT=Serial \
+			   #DEBUG_ESP_WIFI \
 			   #COOGLEIOT_WITH_REMOTEDEBUG \
-			   COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME=Debug 
+			   #COOGLEIOT_REMOTEDEBUG_INSTANCE_NAME=Debug 
 			
 CPP_EXTRA := $(addprefix -D, $(APP_DEFINES)) -ffunction-sections $(CPP_EXTRA)
 C_EXTRA :=  $(addprefix -D, $(APP_DEFINES)) -ffunction-sections $(C_EXTRA)

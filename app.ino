@@ -27,6 +27,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
 #include <FastLED.h>
 #include <Hash.h>
 #include <PubSubClient.h>
@@ -373,14 +374,16 @@ bool onParseConfig(DynamicJsonDocument& doc) {
 
 void setupConfig()
 {
+	char *t;
 	app_config = (app_config_t *)os_zalloc(sizeof(app_config_t));
 
-	configManager = new CoogleIOT_Config;
+	configManager = CoogleIOT_Config::getInstance();
 	configManager->setLogger(_ciot_log);
 	configManager->setConfigStruct((coogleiot_config_base_t *)app_config);
 	configManager->setParseCallback(onParseConfig);
 	configManager->initialize();
 }
+
 
 void setupWiFi()
 {

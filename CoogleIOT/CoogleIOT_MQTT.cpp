@@ -27,11 +27,58 @@ extern "C" void __coogleiot_mqtt_connect_timer_callback(void *self)
 	obj->connectTimerTick = true;
 }
 
+CoogleIOT_MQTT& CoogleIOT_MQTT::setClient(WiFiClient *c)
+{
+	espClient = c;
+
+	if(espClientSecure) {
+		espClientSecure = NULL;
+	}
+
+	if(mqttClient) {
+		delete mqttClient;
+		mqttClient = new PubSubClient(*c);
+	}
+
+	useSecure = false;
+	return *this;
+}
+
+CoogleIOT_MQTT& CoogleIOT_MQTT::setClient(WiFiClientSecure *c)
+{
+	espClientSecure = c;
+
+	if(espClient) {
+		espClient = NULL;
+	}
+
+	if(mqttClient) {
+		delete mqttClient;
+		mqttClient = new PubSubClient(*c);
+	}
+
+	useSecure = true;
+	return *this;
+}
+
 bool CoogleIOT_MQTT::initialize()
 {
 	coogleiot_config_base_t *config;
 
-	mqttClient = new PubSubClient(espClient);
+	if(!espClient && !espClientSecure) {
+		espClient = new WiFiClient();
+		useSecure = false;
+
+		if(logger)
+			logger->warn(F("[MQTT] No WiFi client specified, using insecure by default"));
+	}
+
+	if(useSecure) {
+		mqttClient = new PubSubClient(*espClientSecure);
+	} else {
+		mqttClient = new PubSubClient(*espClient);
+	}
+
 	os_timer_setfn(&connectTimer, __coogleiot_mqtt_connect_timer_callback, this);
 
 	if(configManager) {
@@ -42,7 +89,7 @@ bool CoogleIOT_MQTT::initialize()
 			setHostname(config->mqtt_host);
 
 			if(logger)
-				logger->info("[MQTT] Loaded Configuration from Config Manager");
+				logger->info(F("[MQTT] Loaded Configuration from Config Manager"));
 		}
 	}
 }
@@ -80,19 +127,19 @@ bool CoogleIOT_MQTT::doConnect()
 
 	if(!strlen(hostname)) {
 		if(logger)
-			logger->debug("[MQTT] Cannot connect, no host name provided");
+			logger->debug(F("[MQTT] Cannot connect, no host name provided"));
 		return false;
 	}
 
 	if((port < 1) || (port > 65535)) {
 		if(logger)
-			logger->debug("[MQTT] Cannot connect, invalid port");
+			logger->debug(F("[MQTT] Cannot connect, invalid port"));
 		return false;
 	}
 
 	if(!strlen(client_id)) {
-		if(logger)
-			logger->debug("[MQTT] Cannot Connect, no client_id");
+		if(logger) 
+			logger->debug(F("[MQTT] Cannot Connect, no client_id"));
 		return false;
 	}
 
@@ -103,17 +150,21 @@ bool CoogleIOT_MQTT::doConnect()
 	}
 
 	if(logger)
-		logger->logPrintf(DEBUG, "[MQTT] Attempting to connect to %s:%d (client: %s)", hostname, port, client_id);
+		logger->logPrintf(DEBUG, F("[MQTT] Attempting to connect to %s:%d (client: %s)"), hostname, port, client_id);
 
 	if(strlen(username) == 0) {
 		if(strlen(lwt_topic) == 0) {
+			yield();
 			cResult = mqttClient->connect(client_id);
 		} else {
 			if(strlen(lwt_msg) > 0) {
+
 				cResult = mqttClient->connect(client_id, lwt_topic, 0, false, lwt_msg);
+
 			} else {
+
 				if(logger)
-					logger->warn("[MQTT] Cannot register LWT topic, no message provided.");
+					logger->warn(F("[MQTT] Cannot register LWT topic, no message provided."));
 
 				cResult = mqttClient->connect(client_id);
 			}
@@ -126,11 +177,14 @@ bool CoogleIOT_MQTT::doConnect()
 				cResult = mqttClient->connect(client_id, username, password, lwt_topic, 0, false, lwt_msg);
 			} else {
 				if(logger)
-					logger->warn("[MQTT] Cannot register LWT topic, no message provided.");
+					logger->warn(F("[MQTT] Cannot register LWT topic, no message provided."));
 				cResult = mqttClient->connect(client_id, username, password, lwt_topic, 0, false, lwt_msg);
 			}
 		}
 	}
+
+	if(logger)
+		logger->debug("[MQTT] Checking to see if it's connected");
 
 	if(!mqttClient->connected()) {
 
@@ -138,48 +192,53 @@ bool CoogleIOT_MQTT::doConnect()
 			switch(mqttClient->state()) {
 
 				case MQTT_CONNECTION_TIMEOUT:
-					logger->error("MQTT Failure: Connection Timeout (server didn't respond within keep alive time)");
+					logger->error(F("[MQTT] Failure: Connection Timeout (server didn't respond within keep alive time)"));
 					break;
 				case MQTT_CONNECTION_LOST:
-					logger->error("MQTT Failure: Connection Lost (the network connection was broken)");
+					logger->error(F("[MQTT] Failure: Connection Lost (the network connection was broken)"));
 					break;
 				case MQTT_CONNECT_FAILED:
-					logger->error("MQTT Failure: Connection Failed (the network connection failed)");
-					break;
+					logger->error(F("[MQTT] Failure: Connection Failed (the network connection failed)"));
 				case MQTT_DISCONNECTED:
-					logger->error("MQTT Failure: Disconnected (the client is disconnected)");
+					logger->error(F("[MQTT] Failure: Disconnected (the client is disconnected)"));
 					break;
 				case MQTT_CONNECTED:
-					logger->error("MQTT reported as not connected, but state says it is!");
+					logger->error(F("[MQTT] reported as not connected, but state says it is!"));
 					break;
 				case MQTT_CONNECT_BAD_PROTOCOL:
-					logger->error("MQTT Failure: Bad Protocol (the server doesn't support the requested version of MQTT)");
+					logger->error(F("[MQTT] Failure: Bad Protocol (the server doesn't support the requested version of MQTT)"));
 					break;
 				case MQTT_CONNECT_BAD_CLIENT_ID:
-					logger->error("MQTT Failure: Bad Client ID (the server rejected the client identifier)");
+					logger->error(F("[MQTT] Failure: Bad Client ID (the server rejected the client identifier)"));
 					break;
 				case MQTT_CONNECT_UNAVAILABLE:
-					logger->error("MQTT Failure: Unavailable (the server was unable to accept the connection)");
+					logger->error(F("[MQTT] Failure: Unavailable (the server was unable to accept the connection)"));
 					break;
 				case MQTT_CONNECT_BAD_CREDENTIALS:
-					logger->error("MQTT Failure: Bad Credentials (the user name/password were rejected)");
+					logger->error(F("[MQTT] Failure: Bad Credentials (the user name/password were rejected)"));
 					break;
 				case MQTT_CONNECT_UNAUTHORIZED:
-					logger->error("MQTT Failure: Unauthorized (the client was not authorized to connect)");
+					logger->error(F("[MQTT] Failure: Unauthorized (the client was not authorized to connect)"));
 					break;
 				default:
-					logger->error("MQTT Failure: Unknown Error");
+					logger->error(F("[MQTT] Failure: Unknown Error"));
 					break;
 			}
 
-			logger->error("Failed to connect to MQTT Server!");
+			if(useSecure) {
+				char buf[256];
+				espClientSecure->getLastSSLError(buf, 256);
+				logger->logPrintf(DEBUG, "[MQTT] Last SSL Error: %s", buf);
+			}
+
+			logger->error(F("[MQTT] Failed to connect to server!"));
 		}
 
 		return false;
 	}
 
 	if(logger)
-		logger->debug("[MQTT] Connected");
+		logger->debug(F("[MQTT] Connected"));
 
 	if(connectCallback) {
 		connectCallback();
@@ -203,6 +262,10 @@ PubSubClient* CoogleIOT_MQTT::getClient()
 
 bool CoogleIOT_MQTT::connected()
 {
+	if(!active) {
+		return false;
+	}
+	
 	return mqttClient->connected();
 }
 
@@ -299,6 +362,11 @@ CoogleIOT_MQTT& CoogleIOT_MQTT::setClientId(const char *id)
 											COOGLEIOT_MQTT_MAX_CLIENT_ID_LEN : strlen(id));
 
 	return *this;
+}
+
+const char *CoogleIOT_MQTT::getClientId()
+{
+	return &client_id[0];
 }
 
 CoogleIOT_MQTT& CoogleIOT_MQTT::setLogger(CoogleIOT_Logger *log)

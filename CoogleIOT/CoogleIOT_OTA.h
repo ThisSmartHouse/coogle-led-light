@@ -40,7 +40,7 @@
 #endif
 
 #ifndef COOGLEIOT_OTA_CHECK_FOR_UPGRADE_DELAY
-#define COOGLEIOT_OTA_CHECK_FOR_UPGRADE_DELAY 900000
+#define COOGLEIOT_OTA_CHECK_FOR_UPGRADE_DELAY 300000
 #endif
 
 #ifndef COOGLEIOT_OTA_VERIFICATION_WAIT_TIME
@@ -83,12 +83,25 @@ class CoogleIOT_OTA
 		CoogleIOT_OTA& setConfigManager(CoogleIOT_Config *);
 		CoogleIOT_OTA& setCurrentVersion(const char *);
 		CoogleIOT_OTA& setOTAManifestEndpoint(const char *);
+		CoogleIOT_OTA& setManifestSize(size_t);
 		CoogleIOT_OTA& verifyOTAComplete();
+		CoogleIOT_OTA& setSSLClient(BearSSL::WiFiClientSecure *);
 
+		CoogleIOT_OTA& disableOtaCheckTimer();
+		CoogleIOT_OTA& enableOtaCheckTimer();
+
+		CoogleIOT_OTA& disableAutoOTAVerify();
+
+		CoogleIOT_OTA& setUpgradeAvailableCallback(void (*)(const JsonDocument &));
 		CoogleIOT_OTA& setOTACompleteCallback(void (*)());
+		CoogleIOT_OTA& setPreUpgradeCheckCallback(bool (*)());
+		CoogleIOT_OTA& setPostUpgradeCheckCallback(void (*)());
+		CoogleIOT_OTA& setUpgradeVerifyCallback(void (*)());
 
 		CoogleIOT_OTA& enable();
 		CoogleIOT_OTA& disable();
+
+		void upgrade(const char *);
 
 		bool updateTimerTick = false;
 
@@ -99,11 +112,11 @@ class CoogleIOT_OTA
 		char *ca = NULL;
 
 		bool loadAuthorities();
-		void upgrade(const char *);
 		bool writeChunk();
 		bool finishUpgrade();
 
 		bool enabled = true;
+		bool auto_ota_verify = true;
 
 		size_t firmware_remaining;
 		size_t firmware_size;
@@ -113,9 +126,12 @@ class CoogleIOT_OTA
 		rboot_config boot_config;
 
 		void (* completeCallback)() = NULL;
+		void (* upgradeAvailableCallback)(const JsonDocument &) = NULL;
+		bool (* preUpgradeCheckCallback)() = NULL;
+		void (* postUpgradeCheckCallback)() = NULL;
+		void (* upgradeVerifyCallback)() = NULL;
 
 		os_timer_t ota_check_timer;
-		os_timer_t new_rom_test_timer;
 
 		CoogleIOT_Logger *logger = NULL;
 		CoogleIOT_NTP *ntp = NULL;
@@ -123,13 +139,14 @@ class CoogleIOT_OTA
 		CoogleIOT_Config *configManager = NULL;
 
 		HTTPClient *client = NULL;
+		HTTPClient *insecureClient = NULL;
 		BearSSL::WiFiClientSecure *sslClient = NULL;
 
 		SPIFFSCertStoreFile *certs_idx = NULL;
 		SPIFFSCertStoreFile *certs_ar = NULL;
 		BearSSL::CertStore  *cert_store = NULL;
 
-		const size_t manifest_size = JSON_OBJECT_SIZE(3) + 120;
+		size_t manifest_size = JSON_OBJECT_SIZE(3) + 120;
 
 };
 #endif

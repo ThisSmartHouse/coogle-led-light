@@ -52,6 +52,8 @@ class CoogleIOT_Wifi;
 class CoogleIOT_NTP
 {
 	public:
+		~CoogleIOT_NTP();
+
 		CoogleIOT_NTP& setWifiManager(CoogleIOT_Wifi *);
 		CoogleIOT_NTP& setLogger(CoogleIOT_Logger *);
 
@@ -75,6 +77,7 @@ class CoogleIOT_NTP
 		os_timer_t connectTimer;
 		int connectAttempts = 0;
 		bool attemptingSync = false;
+		bool timerSet = false;
 
 		void (* readyCallback)() = NULL;
 

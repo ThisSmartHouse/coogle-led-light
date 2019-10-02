@@ -26,6 +26,7 @@
 #include <WiFiClient.h>
 #include "CoogleIOT_Logger.h"
 #include "CoogleIOT_Config.h"
+#include "lwip/dns.h"
 
 
 #ifndef COOGLEIOT_WIFI_CONNECT_TIMEOUT
@@ -33,7 +34,7 @@
 #endif
 
 #ifndef COOGLEIOT_WIFI_MAX_ATTEMPTS
-#define COOGLEIOT_WIFI_MAX_ATTEMPTS 10
+#define COOGLEIOT_WIFI_MAX_ATTEMPTS 100
 #endif
 
 class CoogleIOT_Logger;
@@ -52,7 +53,7 @@ class CoogleIOT_Wifi
 		char *getRemoteAPPassword();
 		char *getLocalAPName();
 		char *getLocalAPPassword();
-		char *getRemoteStatus();
+		const char *getRemoteStatus();
 
 		CoogleIOT_Wifi& setRemoteAPName(const char *);
 		CoogleIOT_Wifi& setRemoteAPPassword(const char *);
@@ -69,9 +70,15 @@ class CoogleIOT_Wifi
 		CoogleIOT_Wifi& setLogger(CoogleIOT_Logger *);
 		CoogleIOT_Wifi& setConfigManager(CoogleIOT_Config *);
 
+		CoogleIOT_Wifi& enableAP();
+		CoogleIOT_Wifi& disableAP();
+
 		bool connected();
 
 	private:
+
+		CoogleIOT_Wifi& setStationMode();
+		CoogleIOT_Wifi& setAPMode();
 
 		char remoteAPName[33] = {NULL};
 		char remoteAPPassword[65] = {NULL};
@@ -87,7 +94,9 @@ class CoogleIOT_Wifi
 		CoogleIOT_Logger *logger = NULL;
 		CoogleIOT_Config *configManager = NULL;
 
+		bool ap_mode = false;
 		bool attemptingConnection = false;
+		bool ap_active = false;
 
 		bool connect();
 };

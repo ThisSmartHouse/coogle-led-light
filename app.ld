@@ -1,6 +1,6 @@
 /*
   +----------------------------------------------------------------------+
-  | Coogle LED lighting                                                  |
+  | Coogle IOT skeleton                                                  |
   +----------------------------------------------------------------------+
   | Copyright (c) 2017-2019 John Coggeshall                              |
   +----------------------------------------------------------------------+
@@ -43,7 +43,7 @@ MEMORY
  */
 PROVIDE ( _SPIFFS_start = 0x40402000 );
 PROVIDE ( _SPIFFS_end = 0x405F7000 );
-PROVIDE ( _SPIFFS_page = 0x100 );
-PROVIDE ( _SPIFFS_block = 0x4000 );
+PROVIDE ( _SPIFFS_page = 0x80 );
+PROVIDE ( _SPIFFS_block = 0x1000 );
 
 INCLUDE "eagle.app.v6.common.ld"
