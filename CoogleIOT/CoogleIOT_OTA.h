@@ -86,6 +86,8 @@ class CoogleIOT_OTA
 		CoogleIOT_OTA& setManifestSize(size_t);
 		CoogleIOT_OTA& verifyOTAComplete();
 		CoogleIOT_OTA& setSSLClient(BearSSL::WiFiClientSecure *);
+		CoogleIOT_OTA& setWiFiClient(WiFiClient *);
+		CoogleIOT_OTA& useSSL(bool);
 
 		CoogleIOT_OTA& disableOtaCheckTimer();
 		CoogleIOT_OTA& enableOtaCheckTimer();
@@ -117,6 +119,7 @@ class CoogleIOT_OTA
 
 		bool enabled = true;
 		bool auto_ota_verify = true;
+		bool use_ssl = true;
 
 		size_t firmware_remaining;
 		size_t firmware_size;
@@ -141,6 +144,7 @@ class CoogleIOT_OTA
 		HTTPClient *client = NULL;
 		HTTPClient *insecureClient = NULL;
 		BearSSL::WiFiClientSecure *sslClient = NULL;
+		WiFiClient *insecureWiFiClient = NULL;
 
 		SPIFFSCertStoreFile *certs_idx = NULL;
 		SPIFFSCertStoreFile *certs_ar = NULL;

@@ -394,6 +394,12 @@ void setupWiFi()
     WiFiManager->initialize();
 }
 
+void verifyUpgrade()
+{
+	otaManager->verifyOTAComplete();
+	restart = true;
+}
+
 void setupOTA()
 {
 	otaManager = new CoogleIOT_OTA;
@@ -403,6 +409,8 @@ void setupOTA()
 	otaManager->setCurrentVersion(_BuildInfo.src_version);
 	otaManager->setConfigManager(configManager);
 	otaManager->setOTACompleteCallback(onNewFirmware);
+	otaManager->setUpgradeVerifyCallback(verifyUpgrade);
+	otaManager->useSSL(false);
 	otaManager->initialize();
 }
 

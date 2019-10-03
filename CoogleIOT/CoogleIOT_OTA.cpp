@@ -108,6 +108,12 @@ CoogleIOT_OTA& CoogleIOT_OTA::setManifestSize(size_t s)
 	return *this;
 }
 
+CoogleIOT_OTA& CoogleIOT_OTA::useSSL(bool b)
+{
+	use_ssl = b;
+	return *this;
+}
+
 void CoogleIOT_OTA::check()
 {
 	int httpResponseCode;
@@ -115,6 +121,7 @@ void CoogleIOT_OTA::check()
 	char *endpoint_complete;
 	DynamicJsonDocument manifest(manifest_size);
 	DeserializationError err;
+	bool beginResult;
 
 	if(system_upgrade_flag_check() == COOGLEIOT_UPGRADE_STARTED) {
 		return;
@@ -186,7 +193,13 @@ void CoogleIOT_OTA::check()
 	if(logger)
 		logger->logPrintf(INFO, F("[OTA] Checking %s for new firmware"), endpoint_complete);
 
-	if(!client->begin(*sslClient, endpoint_complete)) {
+	if(use_ssl) {
+		beginResult = client->begin(*sslClient, endpoint_complete);
+	} else {
+		beginResult = client->begin(*insecureWiFiClient, endpoint_complete);
+	}
+
+	if(!beginResult) {
 		if(logger)
 			logger->logPrintf(ERROR, F("Failed to connect to end point: %s"), endpoint_complete);
 
@@ -203,7 +216,7 @@ void CoogleIOT_OTA::check()
 
 	if(httpResponseCode < 0) {
 		if(logger)
-			logger->logPrintf(ERROR, F("[OTA] HTTP request to end point '%s' failed: %s"), endpoint, client->errorToString(httpResponseCode).c_str());
+			logger->logPrintf(ERROR, F("[OTA] HTTP request to end point '%s' failed: %s"), endpoint_complete, client->errorToString(httpResponseCode).c_str());
 
 		client->end();
 
@@ -468,6 +481,12 @@ CoogleIOT_OTA::~CoogleIOT_OTA()
 	}
 }
 
+CoogleIOT_OTA& CoogleIOT_OTA::setWiFiClient(WiFiClient *c)
+{
+	insecureWiFiClient = c;
+	return *this;
+}
+
 CoogleIOT_OTA& CoogleIOT_OTA::setSSLClient(BearSSL::WiFiClientSecure *c)
 {
 	sslClient = c;
@@ -518,6 +537,10 @@ void CoogleIOT_OTA::initialize()
 				logger->error(F("[OTA] Failed to load certificate authorities for SSL, OTA disabled."));
 		}
 
+	}
+
+	if(!insecureWiFiClient) {
+		insecureWiFiClient = new WiFiClient;
 	}
 
 	if(ntp == NULL) {
